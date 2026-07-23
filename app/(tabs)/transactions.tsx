@@ -2,6 +2,7 @@ import MaterialIcons from "@expo/vector-icons/MaterialIcons";
 import { router } from "expo-router";
 import { useMemo, useState } from "react";
 import {
+  Alert,
   FlatList,
   Pressable,
   ScrollView,
@@ -15,6 +16,13 @@ import { ScreenContainer } from "@/components/screen-container";
 import { TransactionRow } from "@/components/transaction-row";
 import { useColors } from "@/hooks/use-colors";
 import { useAccounting } from "@/lib/accounting-context";
+import {
+  exportPeriodLabel,
+  filterTransactionsForExport,
+  shareTransactionsCsv,
+  shareTransactionsPdf,
+  type ExportPeriod,
+} from "@/lib/transaction-export";
 import type { TransactionType } from "@/lib/types";
 
 type TypeFilter = TransactionType | "all";
@@ -25,6 +33,7 @@ export default function TransactionsScreen() {
   const [query, setQuery] = useState("");
   const [typeFilter, setTypeFilter] = useState<TypeFilter>("all");
   const [categoryFilter, setCategoryFilter] = useState("all");
+  const [exporting, setExporting] = useState(false);
 
   const filtered = useMemo(() => {
     const needle = query.trim().toLocaleLowerCase();
@@ -40,6 +49,46 @@ export default function TransactionsScreen() {
       ].some((value) => value.toLocaleLowerCase().includes(needle));
     });
   }, [transactions, query, typeFilter, categoryFilter]);
+
+  const exportRecords = async (period: ExportPeriod, format: "csv" | "pdf") => {
+    const selected = filterTransactionsForExport(filtered, period);
+    if (!selected.length) {
+      Alert.alert("Nothing to export", "No records match the selected period and current filters.");
+      return;
+    }
+    setExporting(true);
+    try {
+      const label = exportPeriodLabel(period);
+      if (format === "csv") await shareTransactionsCsv(selected, label);
+      else await shareTransactionsPdf(selected, label);
+    } catch (error) {
+      Alert.alert("Could not export", error instanceof Error ? error.message : "Ledgerly could not create this export.");
+    } finally {
+      setExporting(false);
+    }
+  };
+
+  const chooseFormat = (period: ExportPeriod) => {
+    const count = filterTransactionsForExport(filtered, period).length;
+    Alert.alert(
+      `Export ${exportPeriodLabel(period)}`,
+      `${count} ${count === 1 ? "record" : "records"} matching your current filters. Receipt images stay on this device.`,
+      [
+        { text: "CSV for Google Sheets", onPress: () => void exportRecords(period, "csv") },
+        { text: "PDF report", onPress: () => void exportRecords(period, "pdf") },
+        { text: "Cancel", style: "cancel" },
+      ],
+    );
+  };
+
+  const choosePeriod = () => {
+    Alert.alert("Export transactions", "Choose a date range. Current search, type, and category filters will also apply.", [
+      { text: "This month", onPress: () => chooseFormat("month") },
+      { text: "This year", onPress: () => chooseFormat("year") },
+      { text: "All time", onPress: () => chooseFormat("all") },
+      { text: "Cancel", style: "cancel" },
+    ]);
+  };
 
   return (
     <ScreenContainer>
@@ -75,18 +124,33 @@ export default function TransactionsScreen() {
                 <Text style={[styles.eyebrow, { color: colors.primary }]}>YOUR RECORDS</Text>
                 <Text style={[styles.title, { color: colors.text }]}>Transactions</Text>
               </View>
-              <Pressable
-                accessibilityRole="button"
-                accessibilityLabel="Add transaction"
-                onPress={() => router.push("/transaction-form" as never)}
-                style={({ pressed }) => [
-                  styles.addButton,
-                  { backgroundColor: colors.primary },
-                  pressed && styles.primaryPressed,
-                ]}
-              >
-                <MaterialIcons name="add" size={24} color="#FFFFFF" />
-              </Pressable>
+              <View style={styles.titleActions}>
+                <Pressable
+                  accessibilityRole="button"
+                  accessibilityLabel="Export transactions"
+                  disabled={exporting}
+                  onPress={choosePeriod}
+                  style={({ pressed }) => [
+                    styles.exportButton,
+                    { backgroundColor: colors.surface, borderColor: colors.border },
+                    (pressed || exporting) && styles.primaryPressed,
+                  ]}
+                >
+                  <MaterialIcons name="file-download" size={21} color={colors.primary} />
+                </Pressable>
+                <Pressable
+                  accessibilityRole="button"
+                  accessibilityLabel="Add transaction"
+                  onPress={() => router.push("/transaction-form" as never)}
+                  style={({ pressed }) => [
+                    styles.addButton,
+                    { backgroundColor: colors.primary },
+                    pressed && styles.primaryPressed,
+                  ]}
+                >
+                  <MaterialIcons name="add" size={24} color="#FFFFFF" />
+                </Pressable>
+              </View>
             </View>
 
             <View style={[styles.search, { backgroundColor: colors.surface, borderColor: colors.border }]}>
@@ -220,6 +284,8 @@ const styles = StyleSheet.create({
   titleRow: { flexDirection: "row", alignItems: "center", justifyContent: "space-between" },
   eyebrow: { fontSize: 11, lineHeight: 15, fontWeight: "800", letterSpacing: 1.5 },
   title: { fontSize: 34, lineHeight: 40, fontWeight: "800", letterSpacing: -0.8 },
+  titleActions: { flexDirection: "row", alignItems: "center", gap: 9 },
+  exportButton: { width: 46, height: 46, borderRadius: 16, borderWidth: 1, alignItems: "center", justifyContent: "center" },
   addButton: { width: 46, height: 46, borderRadius: 16, alignItems: "center", justifyContent: "center" },
   primaryPressed: { opacity: 0.88, transform: [{ scale: 0.96 }] },
   pressed: { opacity: 0.65 },

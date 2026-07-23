@@ -8,7 +8,7 @@ import { ScreenContainer } from "@/components/screen-container";
 import { TransactionRow } from "@/components/transaction-row";
 import { useColors } from "@/hooks/use-colors";
 import { useAccounting } from "@/lib/accounting-context";
-import { formatMoney, type SummaryPeriod } from "@/lib/types";
+import { formatLongDate, formatMoney, todayIsoDate, type SummaryPeriod, type Transaction } from "@/lib/types";
 
 const PERIODS: { value: SummaryPeriod; label: string }[] = [
   { value: "month", label: "Month" },
@@ -21,6 +21,7 @@ export default function HomeScreen() {
   const { transactions, getSummary, isLoading, error } = useAccounting();
   const [period, setPeriod] = useState<SummaryPeriod>("month");
   const summary = useMemo(() => getSummary(period), [getSummary, period]);
+  const periodContext = useMemo(() => describePeriod(period, transactions), [period, transactions]);
   const recent = transactions.slice(0, 4);
 
   const tap = (callback: () => void) => {
@@ -66,6 +67,16 @@ export default function HomeScreen() {
               </Pressable>
             );
           })}
+        </View>
+
+        <View style={[styles.periodCard, { backgroundColor: colors.surface, borderColor: colors.border }]}>
+          <View style={[styles.periodIcon, { backgroundColor: `${colors.primary}16` }]}>
+            <MaterialIcons name="calendar-month" size={21} color={colors.primary} />
+          </View>
+          <View style={styles.periodCopy}>
+            <Text style={[styles.periodLabel, { color: colors.text }]}>{periodContext.label}</Text>
+            <Text style={[styles.periodRange, { color: colors.muted }]}>{periodContext.range}</Text>
+          </View>
         </View>
 
         <View style={[styles.balanceCard, { backgroundColor: colors.primary }]}>
@@ -203,6 +214,27 @@ export default function HomeScreen() {
   );
 }
 
+function describePeriod(period: SummaryPeriod, transactions: Transaction[]) {
+  const now = new Date();
+  const today = todayIsoDate();
+  if (period === "month") {
+    const first = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-01`;
+    return {
+      label: new Intl.DateTimeFormat(undefined, { month: "long", year: "numeric" }).format(now),
+      range: `${formatLongDate(first)} – ${formatLongDate(today)}`,
+    };
+  }
+  if (period === "year") {
+    const first = `${now.getFullYear()}-01-01`;
+    return { label: String(now.getFullYear()), range: `${formatLongDate(first)} – ${formatLongDate(today)}` };
+  }
+  const oldest = transactions.reduce<string | null>((earliest, transaction) => !earliest || transaction.date < earliest ? transaction.date : earliest, null);
+  return {
+    label: "All recorded transactions",
+    range: oldest ? `${formatLongDate(oldest)} – ${formatLongDate(today)}` : "No receipt dates recorded yet",
+  };
+}
+
 function EmptyState({
   icon,
   title,
@@ -234,6 +266,11 @@ const styles = StyleSheet.create({
   segment: { height: 42, borderWidth: 1, borderRadius: 13, padding: 3, flexDirection: "row" },
   segmentItem: { flex: 1, borderRadius: 10, alignItems: "center", justifyContent: "center" },
   segmentText: { fontSize: 13, lineHeight: 17, fontWeight: "700" },
+  periodCard: { minHeight: 70, borderWidth: 1, borderRadius: 17, paddingHorizontal: 14, flexDirection: "row", alignItems: "center", gap: 11 },
+  periodIcon: { width: 42, height: 42, borderRadius: 13, alignItems: "center", justifyContent: "center" },
+  periodCopy: { flex: 1, gap: 2 },
+  periodLabel: { fontSize: 16, lineHeight: 21, fontWeight: "800" },
+  periodRange: { fontSize: 12, lineHeight: 17 },
   balanceCard: { borderRadius: 22, padding: 20, gap: 6 },
   balanceTopRow: { flexDirection: "row", justifyContent: "space-between", alignItems: "center" },
   balanceLabel: { color: "#D8EFE8", fontSize: 14, lineHeight: 19, fontWeight: "600" },
