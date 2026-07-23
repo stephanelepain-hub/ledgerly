@@ -84,6 +84,17 @@ describe("receipt parser", () => {
     ]);
   });
 
+  it("extracts French EUR/VAT-class rows and rejects an absurd address amount", () => {
+    const result = parseReceiptText(`MARCHE LOCAL\nZAC DE LA FOURCHETTE 40769.00\nRAISIN NOIR VRAC\n0,315 kg X 6,39EURO/kg 2,01 EUR A\nFREED WHIT.MENT.FORT 2,18 EUR B\nHARICOT VERT VRAC\n0,100 kg X 4,99EURO/kg 0,50 EUR A\nMONTANT DU 19,77 EUR\n2 10E=2Vignettes\nMONTANT DU 19,77 EUR\nCARTE TRD CB 7,69 EUR`);
+
+    expect(result.amountMinor).toBe(1977);
+    expect(result.lineItems.map((item) => [item.name, item.quantity, item.lineTotalMinor])).toEqual([
+      ["RAISIN NOIR VRAC", 0.315, 201],
+      ["FREED WHIT.MENT.FORT", null, 218],
+      ["HARICOT VERT VRAC", 0.1, 50],
+    ]);
+  });
+
   it("extracts French till items with a trailing article count", () => {
     const result = parseReceiptText(`OEUFS SOL X30 6,99 € 1\n1 x 6,99 €\nBAC PISTACHE 2,69 € 1\n1 x 2,69 €\nCHAOURCE AOP 250G 3,55 € 1\n1 x 3,55 €\nJAMBON SANS NITRITE 140G 1,59 € 1\n1 x 1,59 €\nNombre de lignes d'articles 4\nA PAYER 14,82 €\nTOTAL HT 14,05 €\nTOTAL TVA 0,77 €\nTIC 14,82 €`);
 

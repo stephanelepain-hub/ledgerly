@@ -303,7 +303,10 @@ export default function ReceiptReviewScreen() {
               </View>
             ))}
             {lineItems.length === 0 && (
-              <Text style={[styles.emptyCartMessage, { color: colors.muted }]}>No product lines could be matched with prices. Add an item manually.</Text>
+              <View style={styles.emptyCartCopy}>
+                <Text style={[styles.emptyCartMessage, { color: colors.muted }]}>No product lines could be matched with prices. Add an item manually.</Text>
+                <Text style={[styles.diagnosticMessage, { color: colors.primary }]}>A text-only OCR diagnostic was saved locally for connected-device troubleshooting.</Text>
+              </View>
             )}
             <View style={styles.cartFooter}>
               <Pressable onPress={addLineItem} style={({ pressed }) => [styles.addItem, pressed && styles.pressed]}><MaterialIcons name="add" size={18} color={colors.primary} /><Text style={[styles.addItemText, { color: colors.primary }]}>Add item</Text></Pressable>
@@ -420,7 +423,9 @@ const styles = StyleSheet.create({
   cartRow: { minHeight: 44, borderTopWidth: StyleSheet.hairlineWidth, paddingTop: 8, flexDirection: "row", alignItems: "center", gap: 8 },
   cartName: { flex: 1, minWidth: 0, minHeight: 36, fontSize: 14, lineHeight: 19, paddingVertical: 0 },
   cartPrice: { width: 78, minHeight: 36, borderWidth: 1, borderRadius: 10, paddingHorizontal: 8, textAlign: "right", fontSize: 13, lineHeight: 18 },
-  emptyCartMessage: { fontSize: 12, lineHeight: 17, paddingTop: 4 },
+  emptyCartCopy: { gap: 5, paddingTop: 4 },
+  emptyCartMessage: { fontSize: 12, lineHeight: 17 },
+  diagnosticMessage: { fontSize: 10, lineHeight: 15, fontWeight: "700" },
   cartFooter: { paddingTop: 2, flexDirection: "row", alignItems: "center" },
   addItem: { minHeight: 34, flexDirection: "row", alignItems: "center", gap: 4 },
   addItemText: { fontSize: 12, lineHeight: 17, fontWeight: "800" },

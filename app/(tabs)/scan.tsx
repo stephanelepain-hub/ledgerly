@@ -8,6 +8,7 @@ import { ActivityIndicator, Alert, Linking, Pressable, ScrollView, StyleSheet, T
 
 import { ScreenContainer } from "@/components/screen-container";
 import { useColors } from "@/hooks/use-colors";
+import { saveLatestReceiptOcrDiagnostic } from "@/lib/receipt-debug";
 import { createReceiptDraft, updateReceiptDraft } from "@/lib/receipt-draft-store";
 import { mergeReceiptSections, parseReceiptText } from "@/lib/receipt-parser";
 import { recognizeReceiptText, type ReceiptOcrLine } from "@/lib/receipt-ocr";
@@ -89,7 +90,7 @@ export default function ScanScreen() {
     }
   };
 
-  const reviewReceipt = () => {
+  const reviewReceipt = async () => {
     if (!sections.length) return;
     const draft = createReceiptDraft(sections.map((section) => section.uri));
     const ocrText = mergeReceiptSections(sections.map((section) => section.text));
@@ -102,6 +103,16 @@ export default function ScanScreen() {
       extraction,
       extractionSource: "local_ocr",
     });
+    try {
+      await saveLatestReceiptOcrDiagnostic({
+        draftId: draft.id,
+        mergedText: ocrText,
+        sections,
+        extraction,
+      });
+    } catch (error) {
+      console.warn("Could not save the local OCR diagnostic", error);
+    }
     router.push({ pathname: "/receipt-review" as never, params: { draftId: draft.id } });
   };
 
@@ -157,7 +168,7 @@ export default function ScanScreen() {
         </Pressable>
         {!!sections.length && (
           <View style={styles.receiptActions}>
-            <Pressable disabled={working} onPress={reviewReceipt} style={({ pressed }) => [styles.reviewButton, { backgroundColor: colors.surface, borderColor: colors.primary }, (pressed || working) && styles.pressed]}>
+            <Pressable disabled={working} onPress={() => void reviewReceipt()} style={({ pressed }) => [styles.reviewButton, { backgroundColor: colors.surface, borderColor: colors.primary }, (pressed || working) && styles.pressed]}>
               <MaterialIcons name="fact-check" size={21} color={colors.primary} /><Text style={[styles.reviewText, { color: colors.primary }]}>Review {sectionLabel}</Text>
             </Pressable>
             <Pressable disabled={working} onPress={startOver} hitSlop={8} style={styles.restartButton}>
