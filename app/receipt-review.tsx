@@ -31,7 +31,7 @@ import {
 } from "@/lib/receipt-parser";
 import { hasConfiguredCloudRetryEndpoint } from "@/constants/oauth";
 import { trpc } from "@/lib/trpc";
-import { createId, formatMoney, parseAmountToMinor, todayIsoDate, type ReceiptLineItem } from "@/lib/types";
+import { createId, parseAmountToMinor, todayIsoDate, type ReceiptLineItem } from "@/lib/types";
 
 function confidenceLabel(value: number): string {
   if (value >= 0.85) return "High";
@@ -66,7 +66,6 @@ export default function ReceiptReviewScreen() {
     hasConfiguredCloudRetryEndpoint() &&
     !!draft?.ocrText &&
     (!extraction || extraction.overallConfidence < HIGH_CONFIDENCE_THRESHOLD);
-  const lineItemTotalMinor = lineItems.reduce((sum, item) => sum + (item.lineTotalMinor ?? 0), 0);
 
   const applyExtraction = (next: ReceiptExtraction) => {
     setExtraction(next);
@@ -269,19 +268,6 @@ export default function ReceiptReviewScreen() {
             </View>
           )}
 
-          {!!draft.ocrText && (
-            <Pressable onPress={() => setShowRawText((visible) => !visible)} style={[styles.rawTextToggle, { borderColor: colors.border, backgroundColor: colors.surface }]}>
-              <MaterialIcons name="subject" size={19} color={colors.primary} />
-              <Text style={[styles.rawTextToggleLabel, { color: colors.text }]}>{showRawText ? "Hide recognized text" : "View recognized text"}</Text>
-              <MaterialIcons name={showRawText ? "expand-less" : "expand-more"} size={21} color={colors.muted} />
-            </Pressable>
-          )}
-          {showRawText && !!draft.ocrText && (
-            <View style={[styles.rawTextCard, { borderColor: colors.border, backgroundColor: colors.surface }]}>
-              <Text style={[styles.rawText, { color: colors.muted }]}>{draft.ocrText}</Text>
-            </View>
-          )}
-
           <View style={[styles.cartCard, { borderColor: colors.border, backgroundColor: colors.surface }]}>
             <View style={styles.cartHeader}>
               <View>
@@ -299,11 +285,29 @@ export default function ReceiptReviewScreen() {
                 </Pressable>
               </View>
             ))}
+            {lineItems.length === 0 && (
+              <Text style={[styles.emptyCartMessage, { color: colors.muted }]}>No product lines found yet. Add an item, or open OCR diagnostics below to check the recognized text.</Text>
+            )}
             <View style={styles.cartFooter}>
               <Pressable onPress={addLineItem} style={({ pressed }) => [styles.addItem, pressed && styles.pressed]}><MaterialIcons name="add" size={18} color={colors.primary} /><Text style={[styles.addItemText, { color: colors.primary }]}>Add item</Text></Pressable>
-              {!!lineItemTotalMinor && <Text style={[styles.cartTotal, { color: colors.muted }]}>Items {formatMoney(lineItemTotalMinor)}</Text>}
             </View>
           </View>
+
+          {!!draft.ocrText && (
+            <Pressable onPress={() => setShowRawText((visible) => !visible)} style={[styles.rawTextToggle, { borderColor: colors.border, backgroundColor: colors.surface }]}>
+              <MaterialIcons name="subject" size={19} color={colors.primary} />
+              <View style={styles.rawTextToggleCopy}>
+                <Text style={[styles.rawTextToggleLabel, { color: colors.text }]}>{showRawText ? "Hide OCR diagnostics" : "OCR diagnostics"}</Text>
+                <Text style={[styles.rawTextToggleHint, { color: colors.muted }]}>All recognized text, including totals and payment details</Text>
+              </View>
+              <MaterialIcons name={showRawText ? "expand-less" : "expand-more"} size={21} color={colors.muted} />
+            </Pressable>
+          )}
+          {showRawText && !!draft.ocrText && (
+            <View style={[styles.rawTextCard, { borderColor: colors.border, backgroundColor: colors.surface }]}>
+              <Text style={[styles.rawText, { color: colors.muted }]}>{draft.ocrText}</Text>
+            </View>
+          )}
 
           {!!extraction?.warnings.length && (
             <View style={styles.warningList}>
@@ -405,7 +409,9 @@ const styles = StyleSheet.create({
   cloudButton: { minWidth: 58, height: 36, borderRadius: 11, borderWidth: 1, alignItems: "center", justifyContent: "center", paddingHorizontal: 10 },
   cloudButtonText: { fontSize: 12, lineHeight: 16, fontWeight: "800" },
   rawTextToggle: { minHeight: 46, borderWidth: 1, borderRadius: 14, paddingHorizontal: 12, flexDirection: "row", alignItems: "center", gap: 8 },
-  rawTextToggleLabel: { flex: 1, fontSize: 13, lineHeight: 18, fontWeight: "700" },
+  rawTextToggleCopy: { flex: 1, gap: 1 },
+  rawTextToggleLabel: { fontSize: 13, lineHeight: 18, fontWeight: "700" },
+  rawTextToggleHint: { fontSize: 10, lineHeight: 14 },
   rawTextCard: { borderWidth: 1, borderRadius: 14, padding: 12 },
   rawText: { fontSize: 12, lineHeight: 18, fontFamily: "monospace" },
   cartCard: { borderWidth: 1, borderRadius: 16, padding: 12, gap: 8 },
@@ -416,10 +422,10 @@ const styles = StyleSheet.create({
   cartRow: { minHeight: 44, borderTopWidth: StyleSheet.hairlineWidth, paddingTop: 8, flexDirection: "row", alignItems: "center", gap: 8 },
   cartName: { flex: 1, minWidth: 0, minHeight: 36, fontSize: 14, lineHeight: 19, paddingVertical: 0 },
   cartPrice: { width: 78, minHeight: 36, borderWidth: 1, borderRadius: 10, paddingHorizontal: 8, textAlign: "right", fontSize: 13, lineHeight: 18 },
-  cartFooter: { paddingTop: 2, flexDirection: "row", alignItems: "center", justifyContent: "space-between" },
+  emptyCartMessage: { fontSize: 12, lineHeight: 17, paddingTop: 4 },
+  cartFooter: { paddingTop: 2, flexDirection: "row", alignItems: "center" },
   addItem: { minHeight: 34, flexDirection: "row", alignItems: "center", gap: 4 },
   addItemText: { fontSize: 12, lineHeight: 17, fontWeight: "800" },
-  cartTotal: { fontSize: 12, lineHeight: 17, fontWeight: "700" },
   warningList: { gap: 6 },
   warningLine: { flexDirection: "row", alignItems: "center", gap: 7 },
   warningLineText: { fontSize: 12, lineHeight: 17, flex: 1 },

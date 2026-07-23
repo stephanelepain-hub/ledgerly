@@ -119,7 +119,7 @@ export function mergeReceiptSections(sections: string[]): string {
   return merged.join("\n");
 }
 
-const ITEM_NOISE = /\b(sub\s*total|grand\s*total|total|tax|tva|vat|change|cash|card|visa|mastercard|payment|amount\s*due|balance\s*due|discount|coupon|loyalty|thank\s*you)\b/i;
+const ITEM_NOISE = /\b(sub\s*total|grand\s*total|total|tax|tva|vat|t\.?(?:t\.?)?c\.?|h\.?(?:t\.?)?|hors\s*taxe?|toutes?\s+taxes?\s+comprises?|change|cash|card|visa|mastercard|payment|amount\s*due|balance\s*due|discount|coupon|loyalty|thank\s*you)\b/i;
 
 /**
  * Finds conservative item-and-price candidates. The receipt total remains
