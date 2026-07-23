@@ -58,6 +58,7 @@ export default function ReceiptReviewScreen() {
   );
   const [isSaving, setIsSaving] = useState(false);
   const [lineItems, setLineItems] = useState<ReceiptLineItem[]>(initial?.lineItems ?? []);
+  const [preTaxMinor, setPreTaxMinor] = useState(initial?.preTaxMinor ?? null);
   const [taxMinor, setTaxMinor] = useState(initial?.taxMinor ?? null);
 
   const cloudRetry = trpc.receipt.extractFromText.useMutation();
@@ -74,6 +75,7 @@ export default function ReceiptReviewScreen() {
     setMerchant(next.merchant);
     setDescription(next.description);
     setCategoryId(next.categoryId);
+    setPreTaxMinor(next.preTaxMinor ?? null);
     setTaxMinor(next.taxMinor ?? null);
     setLineItems(next.lineItems);
   };
@@ -242,6 +244,13 @@ export default function ReceiptReviewScreen() {
                 )}
               </View>
             </View>
+            {preTaxMinor !== null && (
+              <View style={[styles.taxSummary, { borderTopColor: colors.border }]}>
+                <MaterialIcons name="receipt" size={16} color={colors.muted} />
+                <Text style={[styles.taxSummaryLabel, { color: colors.muted }]}>Total HT</Text>
+                <Text style={[styles.taxSummaryValue, { color: colors.text }]}>{formatMoney(preTaxMinor)}</Text>
+              </View>
+            )}
             {taxMinor !== null && (
               <View style={[styles.taxSummary, { borderTopColor: colors.border }]}>
                 <MaterialIcons name="receipt" size={16} color={colors.muted} />

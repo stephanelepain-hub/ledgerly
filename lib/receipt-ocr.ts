@@ -16,6 +16,7 @@ export interface ReceiptOcrElement {
 export interface ReceiptOcrLine {
   text: string;
   top: number;
+  bottom: number;
   left: number;
   elements: ReceiptOcrElement[];
 }
@@ -51,6 +52,7 @@ export async function recognizeReceiptText(imageUri: string): Promise<ReceiptOcr
     const lines = result.blocks.flatMap((block) => block.lines.map((line) => ({
       text: line.text,
       top: line.frame.top,
+      bottom: line.frame.bottom,
       left: line.frame.left,
       elements: line.elements.map((element) => ({ text: element.text, left: element.frame.left })),
     }))).sort((a, b) => a.top - b.top || a.left - b.left);

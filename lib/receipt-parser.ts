@@ -17,6 +17,8 @@ export interface ReceiptExtraction {
   fieldConfidence: ReceiptFieldConfidence;
   overallConfidence: number;
   warnings: string[];
+  /** Total before VAT/TVA, when it can be identified locally. */
+  preTaxMinor?: number | null;
   /** TVA/VAT included in the total, when it can be identified locally. */
   taxMinor?: number | null;
   lineItems: ReceiptLineItem[];
@@ -133,12 +135,8 @@ export function extractReceiptLineItems(lines: string[], visualRows?: ReceiptOcr
   const items: ReceiptLineItem[] = [];
   const seen = new Set<string>();
   // ML Kit's result.text may flatten columns (all descriptions followed by all
-  // prices). Its line elements retain the row layout printed on the receipt.
-  const sourceLines = visualRows?.length
-    ? visualRows.map((row) => (row.elements.length
-      ? [...row.elements].sort((a, b) => a.left - b.left).map((element) => element.text).join(" ")
-      : row.text))
-    : lines;
+  // prices). Rebuild each printed row from its positioned line fragments.
+  const sourceLines = visualRows?.length ? rebuildVisualRows(visualRows) : lines;
   const cleanedLines = sourceLines.map((rawLine) => rawLine.replace(/\s+/g, " ").trim());
   const amountToken = "(?:[€$£]\\s*)?(\\d{1,3}(?:[ ,]\\d{3})*[.,]\\d{2}|\\d+[.,]\\d{2})";
   // Some French tills print a trailing article count after the price, e.g.
@@ -191,6 +189,33 @@ export function extractReceiptLineItems(lines: string[], visualRows?: ReceiptOcr
   return items;
 }
 
+function rebuildVisualRows(lines: ReceiptOcrLine[]): string[] {
+  const rows: { top: number; bottom: number; fragments: { left: number; text: string }[] }[] = [];
+  for (const line of lines) {
+    const previous = rows.at(-1);
+    const height = Math.max(1, line.bottom - line.top);
+    // ML Kit sometimes reports the description and price as two TextLines
+    // on the same printed row. Group nearby baselines, but never combine a
+    // new OCR section whose coordinates restart at its top.
+    const samePrintedRow = previous
+      && line.top >= previous.top
+      && line.top <= previous.bottom + Math.max(5, height * 0.5);
+    const fragments = line.elements.length
+      ? line.elements.map((element) => ({ left: element.left, text: element.text }))
+      : [{ left: line.left, text: line.text }];
+    if (samePrintedRow) {
+      previous.bottom = Math.max(previous.bottom, line.bottom);
+      previous.fragments.push(...fragments);
+    } else {
+      rows.push({ top: line.top, bottom: line.bottom, fragments });
+    }
+  }
+  return rows.map((row) => row.fragments
+    .sort((a, b) => a.left - b.left)
+    .map((fragment) => fragment.text)
+    .join(" "));
+}
+
 function clamp(value: number): number {
   return Math.max(0, Math.min(1, value));
 }
@@ -219,6 +244,25 @@ function amountLabelConfidence(line: string): number {
   if (/sub\s*total/.test(normalized)) return 0.58;
   if (/tax|tip|change|cash/.test(normalized)) return 0.32;
   return 0.46;
+}
+
+function extractPreTax(lines: string[]): number | null {
+  const amountPattern = /(?:[$€£]\s*)?(\d{1,3}(?:[ ,]\d{3})*(?:[.,]\d{2})|\d+[.,]\d{2})\b/g;
+  const isPreTaxLabel = /\b(?:total\s*)?h\.?t\.?\b|hors\s*taxe?/i;
+
+  for (let index = 0; index < lines.length; index += 1) {
+    if (!isPreTaxLabel.test(lines[index])) continue;
+    const values = [...lines[index].matchAll(amountPattern)]
+      .map((match) => normalizeAmount(match[0]))
+      .filter((value): value is number => value !== null);
+    if (values.length) return values.at(-1) ?? null;
+
+    const next = lines[index + 1] ?? "";
+    if (!ITEM_NOISE.test(next) && /^\s*(?:[€$£]\s*)?\d+(?:[.,]\d{2})\s*$/u.test(next)) {
+      return normalizeAmount(next);
+    }
+  }
+  return null;
 }
 
 function extractTax(lines: string[]): number | null {
@@ -385,6 +429,7 @@ export function parseReceiptText(rawText: string, visualRows?: ReceiptOcrLine[])
   const date = extractDate(text);
   const merchant = extractMerchant(lines);
   const category = extractCategory(text, merchant.value);
+  const preTaxMinor = extractPreTax(lines);
   const taxMinor = extractTax(lines);
   const lineItems = extractReceiptLineItems(lines, visualRows);
   const fieldConfidence: ReceiptFieldConfidence = {
@@ -418,6 +463,7 @@ export function parseReceiptText(rawText: string, visualRows?: ReceiptOcrLine[])
     fieldConfidence,
     overallConfidence,
     warnings,
+    preTaxMinor,
     taxMinor,
     lineItems,
   };
