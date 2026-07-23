@@ -90,6 +90,11 @@ const MERCHANT_NOISE = [
   "transaction",
   "order",
   "customer copy",
+  "alt",
+  "ctrl",
+  "control",
+  "shift",
+  "tab",
 ];
 
 export const HIGH_CONFIDENCE_THRESHOLD = 0.72;
@@ -124,7 +129,11 @@ export function mergeReceiptSections(sections: string[]): string {
   return merged.join("\n");
 }
 
-const ITEM_NOISE = /\b(sub\s*total|grand\s*total|total|tax|tva|vat|t\.?(?:t\.?)?c\.?|tic|h\.?(?:t\.?)?|hors\s*taxe?|toutes?\s+taxes?\s+comprises?|a\s*payer|net\s+a\s+payer|montant\s+d[uû]|nombre\s+de\s+lignes?|change|cash|card|cb|visa|mastercard|payment|amount\s*due|balance\s*due|discount|coupon|loyalty|thank\s*you)\b/i;
+const ITEM_NOISE = /\b(sub\s*total|grand\s*total|total|tax|tva|vat|t\.?(?:t\.?)?c\.?|tic|h\.?[ti1]\.?|hors\s*taxe?|toutes?\s+taxes?\s+comprises?|a\s*payer|net\s+a\s+payer|montant\s+du|nombre\s+de\s+lignes?|change|cash|card|c[b8]|visa|mastercard|payment|amount\s*due|balance\s*due|discount|coupon|loyalty|thank\s*you)\b/i;
+
+function isItemNoise(value: string): boolean {
+  return ITEM_NOISE.test(value.normalize("NFD").replace(/\p{M}/gu, ""));
+}
 
 /**
  * Finds conservative item-and-price candidates. The receipt total remains
@@ -152,7 +161,7 @@ export function extractReceiptLineItems(lines: string[], visualRows?: ReceiptOcr
       .replace(/^0(?=\p{L})/u, "O")
       .replace(/^[-*•\d\s]+/, "")
       .trim();
-    if (!lineTotalMinor || lineTotalMinor > 1_000_000 || ITEM_NOISE.test(name) || !/[\p{L}]/u.test(name) || name.length > 100) return;
+    if (!lineTotalMinor || lineTotalMinor > 1_000_000 || isItemNoise(name) || !/[\p{L}]/u.test(name) || name.length > 100) return;
     const key = `${normalizedLine(name)}|${lineTotalMinor}`;
     if (seen.has(key)) return;
     seen.add(key);
@@ -161,14 +170,14 @@ export function extractReceiptLineItems(lines: string[], visualRows?: ReceiptOcr
 
   for (let index = 0; index < cleanedLines.length; index += 1) {
     const line = cleanedLines[index];
-    if (line.length < 3 || ITEM_NOISE.test(line)) continue;
+    if (line.length < 3 || isItemNoise(line)) continue;
 
     // Several tills put a product on one OCR line and its price on the next.
     // Pair only an isolated price (or quantity × isolated unit price) with the
     // immediately preceding product-looking line to avoid inventing entries.
     const previous = cleanedLines[index - 1] ?? "";
     const previousAlreadyHasPrice = inlinePrice.test(previous);
-    const hasProductPrevious = !!previous && !previousAlreadyHasPrice && !ITEM_NOISE.test(previous) && /[\p{L}]/u.test(previous);
+    const hasProductPrevious = !!previous && !previousAlreadyHasPrice && !isItemNoise(previous) && /[\p{L}]/u.test(previous);
     const measured = measuredPrice.exec(line);
     if (measured && hasProductPrevious) {
       const quantity = Number(measured[1].replace(",", "."));
@@ -255,9 +264,9 @@ function normalizeAmount(raw: string): number | null {
 
 function amountLabelConfidence(line: string): number {
   const normalized = line.toLocaleLowerCase();
-  if (/grand\s*total|amount\s*due|total\s*due|balance\s*due|a\s*payer|net\s*a\s*payer|montant\s+d[uû]/.test(normalized)) return 0.98;
-  if (/total\s*(?:h\.?t\.?|tva|vat)|montant\s+tva|\btax\b/.test(normalized)) return 0.3;
-  if (/\btotal\b/.test(normalized) && !/sub\s*total/.test(normalized)) return 0.93;
+  if (/grand\s*total|amount\s*due|total\s*due|balance\s*due|[aà]\s*payer|net\s+[aà]\s+payer|montant\s+d[uû]/.test(normalized)) return 0.98;
+  if (/total\s*(?:h\.?[ti1]\.?|tva|vat)|montant\s+tva|\btax\b/.test(normalized)) return 0.3;
+  if (/\btotal\b/.test(normalized) && !/sub\s*total/.test(normalized)) return 0.9;
   if (/\bpaid\b|card\s*(?:total|payment)|payment/.test(normalized)) return 0.78;
   if (/sub\s*total/.test(normalized)) return 0.58;
   if (/tax|tip|change|cash/.test(normalized)) return 0.32;
@@ -266,7 +275,7 @@ function amountLabelConfidence(line: string): number {
 
 function extractPreTax(lines: string[]): number | null {
   const amountPattern = /(?:[$€£]\s*)?(\d{1,3}(?:[ ,]\d{3})*(?:[.,]\d{2})|\d+[.,]\d{2})\b/g;
-  const isPreTaxLabel = /\b(?:total\s*)?h\.?t\.?\b|hors\s*taxe?/i;
+  const isPreTaxLabel = /\b(?:total\s*)?h\.?[ti1]\.?\b|hors\s*taxe?/i;
 
   for (let index = 0; index < lines.length; index += 1) {
     if (!isPreTaxLabel.test(lines[index])) continue;
@@ -322,7 +331,7 @@ function extractAmount(lines: string[]): { value: number | null; confidence: num
     frequencies.set(candidate.amountMinor, (frequencies.get(candidate.amountMinor) ?? 0) + 1);
   }
   for (const candidate of candidates) {
-    if ((frequencies.get(candidate.amountMinor) ?? 0) > 1) candidate.confidence = clamp(candidate.confidence + 0.1);
+    if ((frequencies.get(candidate.amountMinor) ?? 0) > 1) candidate.confidence = clamp(candidate.confidence + 0.05);
   }
   candidates.sort((a, b) => {
     if (b.confidence !== a.confidence) return b.confidence - a.confidence;
@@ -397,6 +406,7 @@ function isMerchantNoise(line: string): boolean {
 function titleCaseMerchant(value: string): string {
   const cleaned = value.replace(/\s+/g, " ").replace(/^[^\p{L}\p{N}]+|[^\p{L}\p{N}]+$/gu, "").trim();
   if (!cleaned) return "";
+  if (/^(aldi|lidl)$/i.test(cleaned)) return cleaned.toLocaleUpperCase();
   const mostlyUpper = cleaned.replace(/[^A-Z]/g, "").length > cleaned.replace(/[^A-Za-z]/g, "").length * 0.75;
   if (!mostlyUpper) return cleaned;
   return cleaned
@@ -406,13 +416,14 @@ function titleCaseMerchant(value: string): string {
 
 function extractMerchant(lines: string[]): { value: string; confidence: number } {
   const candidates = lines
-    .slice(0, 9)
-    .map((line, index) => ({ line: line.trim(), index }))
-    .filter(({ line }) => !isMerchantNoise(line));
+    .slice(0, 14)
+    .map((line) => line.trim())
+    .filter((line) => !isMerchantNoise(line))
+    .map((line, index) => ({ line, index }));
 
   const best = candidates[0];
   if (!best) return { value: "", confidence: 0 };
-  const hasBusinessCue = /market|store|restaurant|cafe|pharmacy|shop|mart|foods|fuel|gas/i.test(best.line);
+  const hasBusinessCue = /market|store|restaurant|cafe|pharmacy|shop|mart|foods|fuel|gas|aldi|lidl|carrefour|leclerc|intermarch[eé]|auchan/i.test(best.line);
   const confidence = clamp(0.8 - best.index * 0.055 + (hasBusinessCue ? 0.08 : 0));
   return { value: titleCaseMerchant(best.line), confidence };
 }
@@ -449,7 +460,7 @@ export function parseReceiptText(rawText: string, visualRows?: ReceiptOcrLine[])
   const analysisLines = [...lines, ...visualLines];
   const amount = extractAmount(analysisLines);
   const date = extractDate(text);
-  const merchant = extractMerchant(lines);
+  const merchant = extractMerchant(visualLines.length ? visualLines : lines);
   const category = extractCategory(text, merchant.value);
   const preTaxMinor = extractPreTax(analysisLines);
   const taxMinor = extractTax(analysisLines);
