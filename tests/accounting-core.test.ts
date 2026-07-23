@@ -61,6 +61,24 @@ describe("receipt parser", () => {
     ]);
   });
 
+  it("uses ML Kit visual rows rather than flattened receipt columns", () => {
+    const result = parseReceiptText(
+      `OEUFS SOL X30\n1 X\nBAC PISTACHE\n1 X\n6,99 € 1\n6,99 €\n2,69 € 1\n2,69 €\nA PAYER 14,82 €`,
+      [
+        { text: "OEUFS SOL X30 6,99 € 1", top: 10, left: 0, elements: [{ text: "OEUFS SOL X30", left: 0 }, { text: "6,99 € 1", left: 220 }] },
+        { text: "1 X 6,99 €", top: 20, left: 0, elements: [{ text: "1 X", left: 20 }, { text: "6,99 €", left: 220 }] },
+        { text: "BAC PISTACHE 2,69 € 1", top: 30, left: 0, elements: [{ text: "BAC PISTACHE", left: 0 }, { text: "2,69 € 1", left: 220 }] },
+        { text: "1 X 2,69 €", top: 40, left: 0, elements: [{ text: "1 X", left: 20 }, { text: "2,69 €", left: 220 }] },
+        { text: "A PAYER 14,82 €", top: 50, left: 0, elements: [{ text: "A PAYER", left: 0 }, { text: "14,82 €", left: 220 }] },
+      ],
+    );
+
+    expect(result.lineItems.map((item) => [item.name, item.lineTotalMinor])).toEqual([
+      ["OEUFS SOL X30", 699],
+      ["BAC PISTACHE", 269],
+    ]);
+  });
+
   it("extracts French till items with a trailing article count", () => {
     const result = parseReceiptText(`OEUFS SOL X30 6,99 € 1\n1 x 6,99 €\nBAC PISTACHE 2,69 € 1\n1 x 2,69 €\nCHAOURCE AOP 250G 3,55 € 1\n1 x 3,55 €\nJAMBON SANS NITRITE 140G 1,59 € 1\n1 x 1,59 €\nNombre de lignes d'articles 4\nA PAYER 14,82 €\nTOTAL HT 14,05 €\nTOTAL TVA 0,77 €\nTIC 14,82 €`);
 

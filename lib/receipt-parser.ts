@@ -1,4 +1,5 @@
 import { createId, todayIsoDate, type ReceiptLineItem } from "@/lib/types";
+import type { ReceiptOcrLine } from "@/lib/receipt-ocr";
 
 export interface ReceiptFieldConfidence {
   amount: number;
@@ -128,10 +129,17 @@ const ITEM_NOISE = /\b(sub\s*total|grand\s*total|total|tax|tva|vat|t\.?(?:t\.?)?
  * authoritative: items are suggestions for the user to edit, not a second
  * calculation of the transaction amount.
  */
-export function extractReceiptLineItems(lines: string[]): ReceiptLineItem[] {
+export function extractReceiptLineItems(lines: string[], visualRows?: ReceiptOcrLine[]): ReceiptLineItem[] {
   const items: ReceiptLineItem[] = [];
   const seen = new Set<string>();
-  const cleanedLines = lines.map((rawLine) => rawLine.replace(/\s+/g, " ").trim());
+  // ML Kit's result.text may flatten columns (all descriptions followed by all
+  // prices). Its line elements retain the row layout printed on the receipt.
+  const sourceLines = visualRows?.length
+    ? visualRows.map((row) => (row.elements.length
+      ? [...row.elements].sort((a, b) => a.left - b.left).map((element) => element.text).join(" ")
+      : row.text))
+    : lines;
+  const cleanedLines = sourceLines.map((rawLine) => rawLine.replace(/\s+/g, " ").trim());
   const amountToken = "(?:[€$£]\\s*)?(\\d{1,3}(?:[ ,]\\d{3})*[.,]\\d{2}|\\d+[.,]\\d{2})";
   // Some French tills print a trailing article count after the price, e.g.
   // "OEUFS SOL X30 6,99 € 1". Keep the product name and decimal price,
@@ -366,7 +374,7 @@ function extractCategory(text: string, merchant: string): { value: string; confi
   return { value: bestId, confidence: clamp(0.64 + Math.min(bestScore, 4) * 0.07) };
 }
 
-export function parseReceiptText(rawText: string): ReceiptExtraction {
+export function parseReceiptText(rawText: string, visualRows?: ReceiptOcrLine[]): ReceiptExtraction {
   const text = rawText.replace(/\r/g, "\n").replace(/[ \t]+/g, " ").trim();
   const lines = text
     .split("\n")
@@ -378,7 +386,7 @@ export function parseReceiptText(rawText: string): ReceiptExtraction {
   const merchant = extractMerchant(lines);
   const category = extractCategory(text, merchant.value);
   const taxMinor = extractTax(lines);
-  const lineItems = extractReceiptLineItems(lines);
+  const lineItems = extractReceiptLineItems(lines, visualRows);
   const fieldConfidence: ReceiptFieldConfidence = {
     amount: amount.confidence,
     date: date.confidence,
