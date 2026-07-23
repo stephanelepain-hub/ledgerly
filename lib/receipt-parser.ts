@@ -263,7 +263,7 @@ function normalizeAmount(raw: string): number | null {
 }
 
 function amountLabelConfidence(line: string): number {
-  const normalized = line.toLocaleLowerCase();
+  const normalized = line.toLocaleLowerCase().normalize("NFD").replace(/\p{M}/gu, "");
   if (/grand\s*total|amount\s*due|total\s*due|balance\s*due|[aà]\s*payer|net\s+[aà]\s+payer|montant\s+d[uû]/.test(normalized)) return 0.98;
   if (/total\s*(?:h\.?[ti1]\.?|tva|vat)|montant\s+tva|\btax\b/.test(normalized)) return 0.3;
   if (/\btotal\b/.test(normalized) && !/sub\s*total/.test(normalized)) return 0.9;
@@ -317,6 +317,8 @@ function extractAmount(lines: string[]): { value: number | null; confidence: num
 
   lines.forEach((line, lineIndex) => {
     for (const match of line.matchAll(pattern)) {
+      const matchEnd = (match.index ?? 0) + match[0].length;
+      if (line.slice(matchEnd).trimStart().startsWith("%")) continue;
       const amountMinor = normalizeAmount(match[0]);
       if (!amountMinor) continue;
       let confidence = amountLabelConfidence(line);
@@ -415,6 +417,19 @@ function titleCaseMerchant(value: string): string {
 }
 
 function extractMerchant(lines: string[]): { value: string; confidence: number } {
+  const knownMerchants: { pattern: RegExp; name: string }[] = [
+    { pattern: /\baldi\b/i, name: "ALDI" },
+    { pattern: /\blidl\b/i, name: "LIDL" },
+    { pattern: /\bcarrefour\b/i, name: "Carrefour" },
+    { pattern: /\be\.?\s*leclerc\b/i, name: "E.Leclerc" },
+    { pattern: /\bintermarch[eé]\b/i, name: "Intermarché" },
+    { pattern: /\bauchan\b/i, name: "Auchan" },
+  ];
+  for (const line of lines.slice(0, 14)) {
+    const known = knownMerchants.find((merchant) => merchant.pattern.test(line));
+    if (known) return { value: known.name, confidence: 0.96 };
+  }
+
   const candidates = lines
     .slice(0, 14)
     .map((line) => line.trim())
