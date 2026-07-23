@@ -29,6 +29,7 @@ import {
   HIGH_CONFIDENCE_THRESHOLD,
   type ReceiptExtraction,
 } from "@/lib/receipt-parser";
+import { hasConfiguredCloudRetryEndpoint } from "@/constants/oauth";
 import { trpc } from "@/lib/trpc";
 import { parseAmountToMinor, todayIsoDate } from "@/lib/types";
 
@@ -60,6 +61,7 @@ export default function ReceiptReviewScreen() {
   const cloudRetry = trpc.receipt.extractFromText.useMutation();
   const amountMinor = useMemo(() => parseAmountToMinor(amount), [amount]);
   const needsCloudOffer =
+    hasConfiguredCloudRetryEndpoint() &&
     !!draft?.ocrText &&
     (!extraction || extraction.overallConfidence < HIGH_CONFIDENCE_THRESHOLD);
 
