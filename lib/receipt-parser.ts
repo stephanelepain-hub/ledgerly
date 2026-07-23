@@ -129,28 +129,51 @@ const ITEM_NOISE = /\b(sub\s*total|grand\s*total|total|tax|tva|vat|change|cash|c
 export function extractReceiptLineItems(lines: string[]): ReceiptLineItem[] {
   const items: ReceiptLineItem[] = [];
   const seen = new Set<string>();
-  for (const rawLine of lines) {
-    const line = rawLine.replace(/\s+/g, " ").trim();
-    if (line.length < 3 || ITEM_NOISE.test(line)) continue;
-    const match = /^(.*?)(?:\s+)(?:[€$£]\s*)?(\d{1,3}(?:[ ,]\d{3})*[.,]\d{2}|\d+[.,]\d{2})\s*$/u.exec(line);
-    if (!match) continue;
-    const name = match[1].replace(/^[-*•\d\s]+/, "").trim();
-    const lineTotalMinor = normalizeAmount(match[2]);
-    if (!lineTotalMinor || !/[\p{L}]/u.test(name) || name.length > 100) continue;
+  const cleanedLines = lines.map((rawLine) => rawLine.replace(/\s+/g, " ").trim());
+  const amountToken = "(?:[€$£]\\s*)?(\\d{1,3}(?:[ ,]\\d{3})*[.,]\\d{2}|\\d+[.,]\\d{2})";
+  const inlinePrice = new RegExp(`^(.*?)(?:\\s+)${amountToken}\\s*$`, "u");
+  const standalonePrice = new RegExp(`^${amountToken}\\s*$`, "u");
+  const quantityPrice = new RegExp(`^(\\d+(?:[.,]\\d+)?)\\s*[x×]\\s*${amountToken}\\s*$`, "iu");
 
-    const quantityMatch = /(?:^|\s)(\d+(?:[.,]\d+)?)\s*[x×]/iu.exec(name);
-    const quantity = quantityMatch ? Number(quantityMatch[1].replace(",", ".")) : null;
+  const addItem = (rawName: string, lineTotalMinor: number | null, quantity: number | null, unitPriceMinor: number | null, confidence: number) => {
+    const name = rawName.replace(/^[-*•\d\s]+/, "").trim();
+    if (!lineTotalMinor || ITEM_NOISE.test(name) || !/[\p{L}]/u.test(name) || name.length > 100) return;
     const key = `${normalizedLine(name)}|${lineTotalMinor}`;
-    if (seen.has(key)) continue;
+    if (seen.has(key)) return;
     seen.add(key);
-    items.push({
-      id: createId("item"),
-      name,
-      quantity: quantity && Number.isFinite(quantity) && quantity > 0 ? quantity : null,
-      unitPriceMinor: quantity && quantity > 0 ? Math.round(lineTotalMinor / quantity) : null,
-      lineTotalMinor,
-      confidence: 0.62,
-    });
+    items.push({ id: createId("item"), name, quantity, unitPriceMinor, lineTotalMinor, confidence });
+  };
+
+  for (let index = 0; index < cleanedLines.length; index += 1) {
+    const line = cleanedLines[index];
+    if (line.length < 3 || ITEM_NOISE.test(line)) continue;
+
+    // Several tills put a product on one OCR line and its price on the next.
+    // Pair only an isolated price (or quantity × isolated unit price) with the
+    // immediately preceding product-looking line to avoid inventing entries.
+    const previous = cleanedLines[index - 1] ?? "";
+    const hasProductPrevious = !!previous && !ITEM_NOISE.test(previous) && /[\p{L}]/u.test(previous);
+    const multiplied = quantityPrice.exec(line);
+    if (multiplied && hasProductPrevious) {
+      const quantity = Number(multiplied[1].replace(",", "."));
+      const unitPriceMinor = normalizeAmount(multiplied[2]);
+      const lineTotalMinor = quantity > 0 && unitPriceMinor ? Math.round(quantity * unitPriceMinor) : null;
+      addItem(previous, lineTotalMinor, quantity > 0 ? quantity : null, unitPriceMinor, 0.48);
+      continue;
+    }
+
+    const inline = inlinePrice.exec(line);
+    if (inline && /[\p{L}]/u.test(inline[1])) {
+      const lineTotalMinor = normalizeAmount(inline[2]);
+      const quantityMatch = /(?:^|\s)(\d+(?:[.,]\d+)?)\s*[x×]/iu.exec(inline[1]);
+      const quantity = quantityMatch ? Number(quantityMatch[1].replace(",", ".")) : null;
+      addItem(inline[1], lineTotalMinor, quantity && quantity > 0 ? quantity : null, quantity && quantity > 0 && lineTotalMinor ? Math.round(lineTotalMinor / quantity) : null, 0.62);
+      continue;
+    }
+
+    if (!hasProductPrevious) continue;
+    const single = standalonePrice.exec(line);
+    if (single) addItem(previous, normalizeAmount(single[1]), null, null, 0.5);
   }
   return items;
 }
