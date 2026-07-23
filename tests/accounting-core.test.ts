@@ -71,6 +71,9 @@ describe("accounting summaries", () => {
 describe("amount input", () => {
   it("stores valid decimal values in minor units and rejects non-positive values", () => {
     expect(parseAmountToMinor("$1,234.56")).toBe(123_456);
+    expect(parseAmountToMinor("12,34")).toBe(1_234);
+    expect(parseAmountToMinor("1 234,56")).toBe(123_456);
+    expect(parseAmountToMinor("1.234,56")).toBe(123_456);
     expect(parseAmountToMinor("0")).toBeNull();
     expect(parseAmountToMinor("not an amount")).toBeNull();
   });
