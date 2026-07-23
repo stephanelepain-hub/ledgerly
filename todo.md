@@ -1,0 +1,34 @@
+# Project TODO
+
+- [x] Initialize the Expo SDK 54 mobile project
+- [x] Define the portrait, one-handed mobile interface in design.md
+- [x] Confirm an Expo-compatible on-device OCR library and custom development build requirements
+- [x] Configure Android minimum SDK 26 and camera/gallery permissions
+- [x] Add SQLite local persistence and schema initialization
+- [x] Seed predefined accounting categories and support custom categories
+- [x] Implement transaction domain types, validation, and summary calculations
+- [x] Implement the dashboard with current-period totals, balance, category breakdown, and recent transactions
+- [x] Implement transaction history with search and type/category filtering
+- [x] Implement manual add, review, edit, confirm-before-save, and delete flows
+- [x] Implement category list and custom category creation
+- [x] Implement receipt source selection for camera and gallery
+- [x] Implement receipt image capture/import and local preview
+- [x] Implement on-device OCR integration on supported Android development builds
+- [x] Implement deterministic receipt parsing for amount, date, merchant, and category
+- [x] Implement per-field and overall confidence scoring
+- [x] Implement receipt review with uncertain-field cues and mandatory user confirmation
+- [x] Implement explicit-consent cloud retry for low-confidence extraction
+- [x] Preserve local editing when OCR or cloud extraction fails
+- [x] Add focused tests for parsing, summaries, and local data behavior
+- [x] Create and install unique Ledgerly app branding assets
+- [x] Update app.config.ts branding and leave appSlug unchanged
+- [x] Verify API 26 minimum SDK and Android build configuration
+- [x] Run lint, TypeScript checks, tests, and production/web build validation
+- [x] Review the rendered mobile layout and correct visual or interaction issues
+- [x] Verify every requested feature is marked complete before checkpoint
+- [ ] Save the final project checkpoint and deliver run instructions
+- [ ] Switch the application default currency from USD to EUR
+- [ ] Format all dashboard, transaction, and receipt-review amounts with the euro symbol and European conventions
+- [ ] Update local receipt parsing and cloud extraction to prefer EUR
+- [ ] Update currency-focused tests and documentation
+- [ ] Validate the euro revision and save a new checkpoint
