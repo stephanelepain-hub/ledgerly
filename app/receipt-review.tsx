@@ -33,12 +33,6 @@ import { hasConfiguredCloudRetryEndpoint } from "@/constants/oauth";
 import { trpc } from "@/lib/trpc";
 import { createId, formatMoney, parseAmountToMinor, todayIsoDate, type ReceiptLineItem } from "@/lib/types";
 
-function confidenceLabel(value: number): string {
-  if (value >= 0.85) return "High";
-  if (value >= 0.65) return "Review";
-  return "Low";
-}
-
 export default function ReceiptReviewScreen() {
   const colors = useColors();
   const { draftId } = useLocalSearchParams<{ draftId?: string }>();
@@ -240,12 +234,9 @@ export default function ReceiptReviewScreen() {
                 <MaterialIcons name={source === "cloud_llm" ? "cloud-done" : "offline-bolt"} size={15} color={colors.primary} />
                 <Text style={[styles.sourceText, { color: colors.primary }]}>{source === "cloud_llm" ? "Cloud text retry" : "On-device OCR"}</Text>
               </View>
-              <View style={styles.receiptMetaRight}>
-                {draft.imageUris.length > 1 && <Text style={[styles.confidenceSummary, { color: colors.muted }]}>{draft.imageUris.length} sections</Text>}
-                {extraction && (
-                  <Text style={[styles.confidenceSummary, { color: colors.muted }]}>{Math.round(extraction.overallConfidence * 100)}% extraction confidence</Text>
-                )}
-              </View>
+              {draft.imageUris.length > 1 && (
+                <Text style={[styles.sectionSummary, { color: colors.muted }]}>{draft.imageUris.length} sections</Text>
+              )}
             </View>
             {!!merchant.trim() && (
               <View style={[styles.taxSummary, { borderTopColor: colors.border }]}>
@@ -387,18 +378,11 @@ export default function ReceiptReviewScreen() {
   );
 }
 
-function FieldLabel({ label, confidence }: { label: string; confidence?: number }) {
+function FieldLabel({ label }: { label: string; confidence?: number }) {
   const colors = useColors();
-  const statusColor = confidence === undefined ? colors.muted : confidence >= 0.85 ? colors.success : confidence >= 0.65 ? colors.warning : colors.error;
   return (
     <View style={styles.labelRow}>
       <Text style={[styles.label, { color: colors.text }]}>{label}</Text>
-      {confidence !== undefined && (
-        <View style={[styles.confidenceBadge, { backgroundColor: `${statusColor}16` }]}>
-          <View style={[styles.confidenceDot, { backgroundColor: statusColor }]} />
-          <Text style={[styles.confidenceText, { color: statusColor }]}>{confidenceLabel(confidence)}</Text>
-        </View>
-      )}
     </View>
   );
 }
@@ -416,8 +400,7 @@ const styles = StyleSheet.create({
   receiptMeta: { minHeight: 48, paddingHorizontal: 12, flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 10 },
   sourceBadge: { minHeight: 28, borderRadius: 14, paddingHorizontal: 9, flexDirection: "row", alignItems: "center", gap: 5 },
   sourceText: { fontSize: 11, lineHeight: 15, fontWeight: "800" },
-  receiptMetaRight: { alignItems: "flex-end", gap: 2 },
-  confidenceSummary: { fontSize: 11, lineHeight: 15, flexShrink: 1, textAlign: "right" },
+  sectionSummary: { fontSize: 11, lineHeight: 15, flexShrink: 1, textAlign: "right" },
   taxSummary: { minHeight: 38, borderTopWidth: StyleSheet.hairlineWidth, paddingHorizontal: 12, flexDirection: "row", alignItems: "center", gap: 7 },
   taxSummaryLabel: { flex: 1, fontSize: 12, lineHeight: 17, fontWeight: "700" },
   taxSummaryValue: { fontSize: 13, lineHeight: 18, fontWeight: "800" },
@@ -455,9 +438,6 @@ const styles = StyleSheet.create({
   formSection: { gap: 8 },
   labelRow: { minHeight: 22, marginTop: 6, flexDirection: "row", alignItems: "center", justifyContent: "space-between" },
   label: { fontSize: 13, lineHeight: 18, fontWeight: "800" },
-  confidenceBadge: { height: 23, borderRadius: 12, paddingHorizontal: 8, flexDirection: "row", alignItems: "center", gap: 5 },
-  confidenceDot: { width: 6, height: 6, borderRadius: 3 },
-  confidenceText: { fontSize: 10, lineHeight: 14, fontWeight: "800" },
   amountInputWrap: { minHeight: 66, borderRadius: 16, borderWidth: 1, paddingHorizontal: 15, flexDirection: "row", alignItems: "center" },
   currency: { fontSize: 25, lineHeight: 31, fontWeight: "700", marginRight: 8 },
   amountInput: { flex: 1, fontSize: 31, lineHeight: 38, fontWeight: "800", paddingVertical: 8 },
