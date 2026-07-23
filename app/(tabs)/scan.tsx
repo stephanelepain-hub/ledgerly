@@ -25,6 +25,7 @@ export default function ScanScreen() {
   const openedOnce = useRef(false);
   const [permission, requestPermission] = useCameraPermissions();
   const [cameraOpen, setCameraOpen] = useState(false);
+  const [cameraReady, setCameraReady] = useState(false);
   const [working, setWorking] = useState(false);
   const [previewUri, setPreviewUri] = useState<string | null>(null);
   const [sections, setSections] = useState<ReceiptSection[]>([]);
@@ -37,9 +38,10 @@ export default function ScanScreen() {
       setCameraOpen(false);
       return;
     }
-    setStatus(sections.length ? "Capture the next section with a little overlap" : "Position the top of the receipt inside the frame");
+    setCameraReady(false);
+    setStatus("Starting camera and autofocus…");
     setCameraOpen(true);
-  }, [permission, requestPermission, sections.length]);
+  }, [permission, requestPermission]);
 
   useEffect(() => {
     if (openedOnce.current) return;
@@ -53,6 +55,10 @@ export default function ScanScreen() {
     setStatus("Reading this section on your device…");
     try {
       const result = await recognizeReceiptText(uri);
+      const readableCharacters = result.text.replace(/\s/g, "").length;
+      if (result.lines.length < 3 || readableCharacters < 20) {
+        throw new Error("Not enough receipt text was recognized. Keep the phone parallel to the receipt, move closer, and avoid glare.");
+      }
       setSections((current) => [...current, { uri, text: result.text, lines: result.lines }]);
       setStatus("Section read. Add the next section with overlap, or review the receipt.");
     } catch (error) {
@@ -67,11 +73,11 @@ export default function ScanScreen() {
   };
 
   const capture = async () => {
-    if (!cameraRef.current || working) return;
+    if (!cameraRef.current || !cameraReady || working) return;
     try {
       setWorking(true);
       setStatus("Capturing section…");
-      const photo = await cameraRef.current.takePictureAsync({ quality: 0.9, exif: false });
+      const photo = await cameraRef.current.takePictureAsync({ quality: 1, exif: false });
       if (!photo?.uri) throw new Error("The camera did not return a photo.");
       setCameraOpen(false);
       await processSection(photo.uri);
@@ -137,7 +143,18 @@ export default function ScanScreen() {
         </View>
         <View style={[styles.cameraCard, { backgroundColor: colors.surface, borderColor: colors.border }]}>
           {cameraOpen ? (
-            <CameraView ref={cameraRef} style={styles.camera} facing="back" />
+            <CameraView
+              ref={cameraRef}
+              style={styles.camera}
+              facing="back"
+              autofocus="on"
+              onCameraReady={() => {
+                setCameraReady(true);
+                setStatus(sections.length
+                  ? "Keep the phone parallel and capture the next overlapping section"
+                  : "Keep the phone parallel, fill the frame, and hold steady");
+              }}
+            />
           ) : previewUri ? <Image source={{ uri: previewUri }} style={styles.camera} contentFit="cover" /> : (
             <View style={[styles.camera, styles.emptyCamera, { backgroundColor: colors.background }]}>
               <MaterialIcons name="document-scanner" size={50} color={colors.primary} />
@@ -145,7 +162,13 @@ export default function ScanScreen() {
               <Text style={[styles.emptyBody, { color: colors.muted }]}>Take clear, close sections instead of one distant photo.</Text>
             </View>
           )}
-          {cameraOpen && <View pointerEvents="none" style={styles.frame}><View style={styles.frameShade} /><View style={[styles.frameBox, { borderColor: "#FFFFFF" }]} /></View>}
+          {cameraOpen && (
+            <View pointerEvents="none" style={styles.frame}>
+              <View style={styles.frameShade} />
+              <View style={[styles.frameBox, { borderColor: "#FFFFFF" }]} />
+              <Text style={styles.frameHint}>PARALLEL • CLOSE • NO GLARE</Text>
+            </View>
+          )}
         </View>
         <View style={[styles.status, { backgroundColor: `${colors.primary}12` }]}>
           {working ? <ActivityIndicator size="small" color={colors.primary} /> : <MaterialIcons name={permissionBlocked ? "no-photography" : "auto-awesome"} size={19} color={colors.primary} />}
@@ -159,7 +182,7 @@ export default function ScanScreen() {
             <MaterialIcons name="settings" size={21} color="#FFFFFF" /><Text style={styles.primaryText}>{permission.canAskAgain ? "Allow camera access" : "Open Android settings"}</Text>
           </Pressable>
         ) : (
-          <Pressable disabled={working} onPress={cameraOpen ? capture : () => void openCamera()} style={({ pressed }) => [styles.primary, { backgroundColor: colors.primary }, (pressed || working) && styles.pressed]}>
+          <Pressable disabled={working || (cameraOpen && !cameraReady)} onPress={cameraOpen ? capture : () => void openCamera()} style={({ pressed }) => [styles.primary, { backgroundColor: colors.primary }, (pressed || working || (cameraOpen && !cameraReady)) && styles.pressed]}>
             <MaterialIcons name={cameraOpen ? "photo-camera" : "add-a-photo"} size={22} color="#FFFFFF" /><Text style={styles.primaryText}>{cameraOpen ? "Capture section" : sections.length ? "Add next section" : "Open scanner"}</Text>
           </Pressable>
         )}
@@ -192,7 +215,7 @@ const styles = StyleSheet.create({
   subtitle: { marginTop: 4, fontSize: 13, lineHeight: 19 },
   cameraCard: { height: 330, borderWidth: 1, borderRadius: 22, overflow: "hidden" }, camera: { flex: 1 },
   emptyCamera: { alignItems: "center", justifyContent: "center", padding: 32, gap: 8 }, emptyTitle: { fontSize: 18, lineHeight: 24, fontWeight: "800" }, emptyBody: { fontSize: 13, lineHeight: 19, textAlign: "center", maxWidth: 250 },
-  frame: { ...StyleSheet.absoluteFillObject, alignItems: "center", justifyContent: "center" }, frameShade: { ...StyleSheet.absoluteFillObject, backgroundColor: "#00000022" }, frameBox: { width: "82%", height: "70%", borderWidth: 2, borderRadius: 16 },
+  frame: { ...StyleSheet.absoluteFillObject, alignItems: "center", justifyContent: "center" }, frameShade: { ...StyleSheet.absoluteFillObject, backgroundColor: "#00000022" }, frameBox: { width: "82%", height: "70%", borderWidth: 2, borderRadius: 16 }, frameHint: { position: "absolute", bottom: 14, color: "#FFFFFF", fontSize: 10, lineHeight: 14, fontWeight: "900", letterSpacing: 1.1, textShadowColor: "#000000AA", textShadowRadius: 4 },
   status: { minHeight: 56, borderRadius: 14, paddingHorizontal: 14, flexDirection: "row", alignItems: "center", gap: 9 }, statusCopy: { flex: 1, gap: 1 }, statusText: { fontSize: 13, lineHeight: 18, fontWeight: "600" }, sectionCount: { fontSize: 11, lineHeight: 15 },
   primary: { minHeight: 54, borderRadius: 16, alignItems: "center", justifyContent: "center", flexDirection: "row", gap: 9 }, primaryText: { color: "#FFFFFF", fontSize: 16, lineHeight: 21, fontWeight: "800" },
   secondary: { minHeight: 52, borderWidth: 1, borderRadius: 16, alignItems: "center", justifyContent: "center", flexDirection: "row", gap: 8 }, secondaryText: { fontSize: 15, lineHeight: 20, fontWeight: "700" },
