@@ -139,7 +139,7 @@ export function extractReceiptLineItems(lines: string[], visualRows?: ReceiptOcr
   const sourceLines = visualRows?.length ? rebuildReceiptVisualRows(visualRows) : lines;
   const cleanedLines = sourceLines.map((rawLine) => rawLine.replace(/\s+/g, " ").trim());
   const amountToken = "(?:[€$£]\\s*)?(\\d{1,3}(?:[ ,]\\d{3})*[.,]\\d{2}|\\d+[.,]\\d{2})";
-  const priceSuffix = "(?:\\s*(?:EUR|[€$£]))?(?:\\s+(?:[A-Z]|\\d+))?";
+  const priceSuffix = "(?:\\s*(?:EUR|EURO|[€$£]|e))?(?:\\s+(?:[A-Z]|\\d+))?";
   // French tills commonly append a VAT class or article count after a price:
   // "FROMAGE 2,18 EUR B" or "OEUFS 6,99 € 1".
   const inlinePrice = new RegExp(`^(.*?)(?:\\s+)${amountToken}${priceSuffix}\\s*$`, "iu");
@@ -148,7 +148,10 @@ export function extractReceiptLineItems(lines: string[], visualRows?: ReceiptOcr
   const measuredPrice = new RegExp(`^(\\d+(?:[.,]\\d+)?)\\s*(?:kg|g|l)\\b.+?${amountToken}${priceSuffix}\\s*$`, "iu");
 
   const addItem = (rawName: string, lineTotalMinor: number | null, quantity: number | null, unitPriceMinor: number | null, confidence: number) => {
-    const name = rawName.replace(/^[-*•\d\s]+/, "").trim();
+    const name = rawName
+      .replace(/^0(?=\p{L})/u, "O")
+      .replace(/^[-*•\d\s]+/, "")
+      .trim();
     if (!lineTotalMinor || lineTotalMinor > 1_000_000 || ITEM_NOISE.test(name) || !/[\p{L}]/u.test(name) || name.length > 100) return;
     const key = `${normalizedLine(name)}|${lineTotalMinor}`;
     if (seen.has(key)) return;
@@ -201,24 +204,27 @@ export function extractReceiptLineItems(lines: string[], visualRows?: ReceiptOcr
 }
 
 export function rebuildReceiptVisualRows(lines: ReceiptOcrLine[]): string[] {
-  const rows: { top: number; bottom: number; fragments: { left: number; text: string }[] }[] = [];
+  const rows: { anchorTop: number; anchorBottom: number; fragments: { left: number; text: string }[] }[] = [];
   for (const line of lines) {
     const previous = rows.at(-1);
-    const height = Math.max(1, line.bottom - line.top);
-    // ML Kit sometimes reports the description and price as two TextLines
-    // on the same printed row. Group nearby baselines, but never combine a
-    // new OCR section whose coordinates restart at its top.
-    const samePrintedRow = previous
-      && line.top >= previous.top
-      && line.top <= previous.bottom + Math.max(5, height * 0.5);
+    const overlap = previous
+      ? Math.max(0, Math.min(previous.anchorBottom, line.bottom) - Math.max(previous.anchorTop, line.top))
+      : 0;
+    const minimumHeight = previous
+      ? Math.max(1, Math.min(previous.anchorBottom - previous.anchorTop, line.bottom - line.top))
+      : 1;
+    // Compare with the first fragment's fixed vertical bounds. Expanding the
+    // row bounds caused adjacent receipt lines to merge transitively into one
+    // giant row. Description and price fragments overlap; the next printed
+    // line generally does not overlap the original anchor.
+    const samePrintedRow = !!previous && overlap / minimumHeight >= 0.25;
     const fragments = line.elements.length
       ? line.elements.map((element) => ({ left: element.left, text: element.text }))
       : [{ left: line.left, text: line.text }];
     if (samePrintedRow) {
-      previous.bottom = Math.max(previous.bottom, line.bottom);
       previous.fragments.push(...fragments);
     } else {
-      rows.push({ top: line.top, bottom: line.bottom, fragments });
+      rows.push({ anchorTop: line.top, anchorBottom: line.bottom, fragments });
     }
   }
   return rows.map((row) => row.fragments
@@ -250,6 +256,7 @@ function normalizeAmount(raw: string): number | null {
 function amountLabelConfidence(line: string): number {
   const normalized = line.toLocaleLowerCase();
   if (/grand\s*total|amount\s*due|total\s*due|balance\s*due|a\s*payer|net\s*a\s*payer|montant\s+d[uû]/.test(normalized)) return 0.98;
+  if (/total\s*(?:h\.?t\.?|tva|vat)|montant\s+tva|\btax\b/.test(normalized)) return 0.3;
   if (/\btotal\b/.test(normalized) && !/sub\s*total/.test(normalized)) return 0.93;
   if (/\bpaid\b|card\s*(?:total|payment)|payment/.test(normalized)) return 0.78;
   if (/sub\s*total/.test(normalized)) return 0.58;

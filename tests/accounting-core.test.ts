@@ -84,6 +84,41 @@ describe("receipt parser", () => {
     ]);
   });
 
+  it("reconstructs the captured ALDI receipt without merging adjacent rows", () => {
+    const result = parseReceiptText(
+      `0EUFS SOL X30\n1x\nBAC PISTACHE\n1x 2,69 €\nCHAOURCE AOP 250G\n6,99 €\n1x 3,55 €\nJAMBON SANS NÍ TRITE 1406\n1x 1,59 e\nA PAYER\nTOTAL HT\nTOTAL TVA\n6,99 e 1\n2,69 € 1\n3,55 1\n14,82 e\n14,05 €\n0,77 €\n1,59 e 1`,
+      [
+        { text: "0EUFS SOL X30", top: 1528, bottom: 1601, left: 717, elements: [{ text: "0EUFS SOL X30", left: 717 }] },
+        { text: "6,99 e 1", top: 1565, bottom: 1629, left: 1797, elements: [{ text: "6,99", left: 1797 }, { text: "e", left: 1969 }, { text: "1", left: 2041 }] },
+        { text: "1x", top: 1603, bottom: 1677, left: 932, elements: [{ text: "1x", left: 932 }] },
+        { text: "6,99 €", top: 1610, bottom: 1686, left: 1154, elements: [{ text: "6,99 €", left: 1154 }] },
+        { text: "BAC PISTACHE", top: 1668, bottom: 1743, left: 712, elements: [{ text: "BAC PISTACHE", left: 712 }] },
+        { text: "2,69 € 1", top: 1705, bottom: 1771, left: 1804, elements: [{ text: "2,69 € 1", left: 1804 }] },
+        { text: "1x 2,69 €", top: 1746, bottom: 1822, left: 931, elements: [{ text: "1x 2,69 €", left: 931 }] },
+        { text: "CHAOURCE AOP 250G", top: 1813, bottom: 1890, left: 708, elements: [{ text: "CHAOURCE AOP 250G", left: 708 }] },
+        { text: "3,55 1", top: 1844, bottom: 1916, left: 1848, elements: [{ text: "3,55 1", left: 1848 }] },
+        { text: "JAMBON SANS NÍ TRITE 1406", top: 1956, bottom: 2046, left: 707, elements: [{ text: "JAMBON SANS NÍ TRITE 1406", left: 707 }] },
+        { text: "1,59 e 1", top: 1990, bottom: 2060, left: 1830, elements: [{ text: "1,59 e 1", left: 1830 }] },
+        { text: "A PAYER", top: 2291, bottom: 2367, left: 735, elements: [{ text: "A PAYER", left: 735 }] },
+        { text: "14,82 e", top: 2313, bottom: 2383, left: 1811, elements: [{ text: "14,82 e", left: 1811 }] },
+        { text: "14,05 €", top: 2374, bottom: 2460, left: 1810, elements: [{ text: "14,05 €", left: 1810 }] },
+        { text: "TOTAL HT", top: 2375, bottom: 2448, left: 691, elements: [{ text: "TOTAL HT", left: 691 }] },
+        { text: "TOTAL TVA", top: 2456, bottom: 2530, left: 688, elements: [{ text: "TOTAL TVA", left: 688 }] },
+        { text: "0,77 €", top: 2472, bottom: 2545, left: 1844, elements: [{ text: "0,77 €", left: 1844 }] },
+      ],
+    );
+
+    expect(result.amountMinor).toBe(1482);
+    expect(result.preTaxMinor).toBe(1405);
+    expect(result.taxMinor).toBe(77);
+    expect(result.lineItems.map((item) => [item.name, item.lineTotalMinor])).toEqual([
+      ["OEUFS SOL X30", 699],
+      ["BAC PISTACHE", 269],
+      ["CHAOURCE AOP 250G", 355],
+      ["JAMBON SANS NÍ TRITE 1406", 159],
+    ]);
+  });
+
   it("extracts French EUR/VAT-class rows and rejects an absurd address amount", () => {
     const result = parseReceiptText(`MARCHE LOCAL\nZAC DE LA FOURCHETTE 40769.00\nRAISIN NOIR VRAC\n0,315 kg X 6,39EURO/kg 2,01 EUR A\nFREED WHIT.MENT.FORT 2,18 EUR B\nHARICOT VERT VRAC\n0,100 kg X 4,99EURO/kg 0,50 EUR A\nMONTANT DU 19,77 EUR\n2 10E=2Vignettes\nMONTANT DU 19,77 EUR\nCARTE TRD CB 7,69 EUR`);
 
