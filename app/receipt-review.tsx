@@ -63,6 +63,9 @@ export default function ReceiptReviewScreen() {
 
   const cloudRetry = trpc.receipt.extractFromText.useMutation();
   const amountMinor = useMemo(() => parseAmountToMinor(amount), [amount]);
+  const displayedPreTaxMinor = preTaxMinor ?? (
+    amountMinor && taxMinor && amountMinor > taxMinor ? amountMinor - taxMinor : null
+  );
   const needsCloudOffer =
     hasConfiguredCloudRetryEndpoint() &&
     !!draft?.ocrText &&
@@ -244,18 +247,32 @@ export default function ReceiptReviewScreen() {
                 )}
               </View>
             </View>
-            {preTaxMinor !== null && (
+            {!!merchant.trim() && (
+              <View style={[styles.taxSummary, { borderTopColor: colors.border }]}>
+                <MaterialIcons name="storefront" size={16} color={colors.primary} />
+                <Text style={[styles.taxSummaryLabel, { color: colors.muted }]}>Merchant</Text>
+                <Text numberOfLines={1} style={[styles.merchantSummaryValue, { color: colors.text }]}>{merchant.trim()}</Text>
+              </View>
+            )}
+            {displayedPreTaxMinor !== null && (
               <View style={[styles.taxSummary, { borderTopColor: colors.border }]}>
                 <MaterialIcons name="receipt" size={16} color={colors.muted} />
                 <Text style={[styles.taxSummaryLabel, { color: colors.muted }]}>Total HT</Text>
-                <Text style={[styles.taxSummaryValue, { color: colors.text }]}>{formatMoney(preTaxMinor)}</Text>
+                <Text style={[styles.taxSummaryValue, { color: colors.text }]}>{formatMoney(displayedPreTaxMinor)}</Text>
               </View>
             )}
             {taxMinor !== null && (
               <View style={[styles.taxSummary, { borderTopColor: colors.border }]}>
                 <MaterialIcons name="receipt" size={16} color={colors.muted} />
-                <Text style={[styles.taxSummaryLabel, { color: colors.muted }]}>TVA included</Text>
+                <Text style={[styles.taxSummaryLabel, { color: colors.muted }]}>TVA</Text>
                 <Text style={[styles.taxSummaryValue, { color: colors.text }]}>{formatMoney(taxMinor)}</Text>
+              </View>
+            )}
+            {amountMinor !== null && (
+              <View style={[styles.taxSummary, styles.totalSummary, { borderTopColor: colors.border }]}>
+                <MaterialIcons name="payments" size={16} color={colors.primary} />
+                <Text style={[styles.taxSummaryLabel, { color: colors.text }]}>Total TTC</Text>
+                <Text style={[styles.totalSummaryValue, { color: colors.text }]}>{formatMoney(amountMinor)}</Text>
               </View>
             )}
           </View>
@@ -404,6 +421,9 @@ const styles = StyleSheet.create({
   taxSummary: { minHeight: 38, borderTopWidth: StyleSheet.hairlineWidth, paddingHorizontal: 12, flexDirection: "row", alignItems: "center", gap: 7 },
   taxSummaryLabel: { flex: 1, fontSize: 12, lineHeight: 17, fontWeight: "700" },
   taxSummaryValue: { fontSize: 13, lineHeight: 18, fontWeight: "800" },
+  merchantSummaryValue: { maxWidth: "62%", fontSize: 13, lineHeight: 18, fontWeight: "800", textAlign: "right" },
+  totalSummary: { minHeight: 44 },
+  totalSummaryValue: { fontSize: 15, lineHeight: 20, fontWeight: "900" },
   warningCard: { borderWidth: 1, borderRadius: 15, padding: 12, flexDirection: "row", alignItems: "flex-start", gap: 9 },
   warningCopy: { flex: 1, gap: 2 },
   warningTitle: { fontSize: 13, lineHeight: 18, fontWeight: "800" },

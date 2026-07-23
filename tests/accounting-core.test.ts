@@ -86,8 +86,10 @@ describe("receipt parser", () => {
 
   it("reconstructs the captured ALDI receipt without merging adjacent rows", () => {
     const result = parseReceiptText(
-      `0EUFS SOL X30\n1x\nBAC PISTACHE\n1x 2,69 €\nCHAOURCE AOP 250G\n6,99 €\n1x 3,55 €\nJAMBON SANS NÍ TRITE 1406\n1x 1,59 e\nA PAYER\nTOTAL HT\nTOTAL TVA\n6,99 e 1\n2,69 € 1\n3,55 1\n14,82 e\n14,05 €\n0,77 €\n1,59 e 1`,
+      `alt\nALDI\n0EUFS SOL X30\n1x\nBAC PISTACHE\n1x 2,69 €\nCHAOURCE AOP 250G\n6,99 €\n1x 3,55 €\nJAMBON SANS NÍ TRITE 1406\n1x 1,59 e\nÀ PAYER\nTOTAL HI\nTOTAL TVA\nC8\n6,99 e 1\n2,69 € 1\n3,55 1\n14,82 e\n14,05 €\n0,77 €\n1,59 e 1`,
       [
+        { text: "alt", top: 900, bottom: 950, left: 500, elements: [{ text: "alt", left: 500 }] },
+        { text: "ALDI", top: 1100, bottom: 1170, left: 1200, elements: [{ text: "ALDI", left: 1200 }] },
         { text: "0EUFS SOL X30", top: 1528, bottom: 1601, left: 717, elements: [{ text: "0EUFS SOL X30", left: 717 }] },
         { text: "6,99 e 1", top: 1565, bottom: 1629, left: 1797, elements: [{ text: "6,99", left: 1797 }, { text: "e", left: 1969 }, { text: "1", left: 2041 }] },
         { text: "1x", top: 1603, bottom: 1677, left: 932, elements: [{ text: "1x", left: 932 }] },
@@ -99,15 +101,18 @@ describe("receipt parser", () => {
         { text: "3,55 1", top: 1844, bottom: 1916, left: 1848, elements: [{ text: "3,55 1", left: 1848 }] },
         { text: "JAMBON SANS NÍ TRITE 1406", top: 1956, bottom: 2046, left: 707, elements: [{ text: "JAMBON SANS NÍ TRITE 1406", left: 707 }] },
         { text: "1,59 e 1", top: 1990, bottom: 2060, left: 1830, elements: [{ text: "1,59 e 1", left: 1830 }] },
-        { text: "A PAYER", top: 2291, bottom: 2367, left: 735, elements: [{ text: "A PAYER", left: 735 }] },
+        { text: "À PAYER", top: 2291, bottom: 2367, left: 735, elements: [{ text: "À PAYER", left: 735 }] },
         { text: "14,82 e", top: 2313, bottom: 2383, left: 1811, elements: [{ text: "14,82 e", left: 1811 }] },
         { text: "14,05 €", top: 2374, bottom: 2460, left: 1810, elements: [{ text: "14,05 €", left: 1810 }] },
-        { text: "TOTAL HT", top: 2375, bottom: 2448, left: 691, elements: [{ text: "TOTAL HT", left: 691 }] },
+        { text: "TOTAL HI", top: 2375, bottom: 2448, left: 691, elements: [{ text: "TOTAL HI", left: 691 }] },
         { text: "TOTAL TVA", top: 2456, bottom: 2530, left: 688, elements: [{ text: "TOTAL TVA", left: 688 }] },
         { text: "0,77 €", top: 2472, bottom: 2545, left: 1844, elements: [{ text: "0,77 €", left: 1844 }] },
+        { text: "C8", top: 2550, bottom: 2620, left: 690, elements: [{ text: "C8", left: 690 }] },
+        { text: "14,82 €", top: 2560, bottom: 2630, left: 1810, elements: [{ text: "14,82 €", left: 1810 }] },
       ],
     );
 
+    expect(result.merchant).toBe("ALDI");
     expect(result.amountMinor).toBe(1482);
     expect(result.preTaxMinor).toBe(1405);
     expect(result.taxMinor).toBe(77);
