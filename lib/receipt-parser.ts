@@ -121,7 +121,7 @@ export function mergeReceiptSections(sections: string[]): string {
   return merged.join("\n");
 }
 
-const ITEM_NOISE = /\b(sub\s*total|grand\s*total|total|tax|tva|vat|t\.?(?:t\.?)?c\.?|h\.?(?:t\.?)?|hors\s*taxe?|toutes?\s+taxes?\s+comprises?|change|cash|card|visa|mastercard|payment|amount\s*due|balance\s*due|discount|coupon|loyalty|thank\s*you)\b/i;
+const ITEM_NOISE = /\b(sub\s*total|grand\s*total|total|tax|tva|vat|t\.?(?:t\.?)?c\.?|tic|h\.?(?:t\.?)?|hors\s*taxe?|toutes?\s+taxes?\s+comprises?|a\s*payer|nombre\s+de\s+lignes?|change|cash|card|cb|visa|mastercard|payment|amount\s*due|balance\s*due|discount|coupon|loyalty|thank\s*you)\b/i;
 
 /**
  * Finds conservative item-and-price candidates. The receipt total remains
@@ -133,7 +133,10 @@ export function extractReceiptLineItems(lines: string[]): ReceiptLineItem[] {
   const seen = new Set<string>();
   const cleanedLines = lines.map((rawLine) => rawLine.replace(/\s+/g, " ").trim());
   const amountToken = "(?:[€$£]\\s*)?(\\d{1,3}(?:[ ,]\\d{3})*[.,]\\d{2}|\\d+[.,]\\d{2})";
-  const inlinePrice = new RegExp(`^(.*?)(?:\\s+)${amountToken}\\s*$`, "u");
+  // Some French tills print a trailing article count after the price, e.g.
+  // "OEUFS SOL X30 6,99 € 1". Keep the product name and decimal price,
+  // while ignoring that final count.
+  const inlinePrice = new RegExp(`^(.*?)(?:\\s+)${amountToken}(?:\\s*(?:[€$£])?\\s*(?:x?\\s*\\d+))?\\s*$`, "u");
   const standalonePrice = new RegExp(`^${amountToken}\\s*$`, "u");
   const quantityPrice = new RegExp(`^(\\d+(?:[.,]\\d+)?)\\s*[x×]\\s*${amountToken}\\s*$`, "iu");
 
@@ -202,7 +205,7 @@ function normalizeAmount(raw: string): number | null {
 
 function amountLabelConfidence(line: string): number {
   const normalized = line.toLocaleLowerCase();
-  if (/grand\s*total|amount\s*due|total\s*due|balance\s*due/.test(normalized)) return 0.98;
+  if (/grand\s*total|amount\s*due|total\s*due|balance\s*due|a\s*payer/.test(normalized)) return 0.98;
   if (/\btotal\b/.test(normalized) && !/sub\s*total/.test(normalized)) return 0.93;
   if (/\bpaid\b|card\s*(?:total|payment)|payment/.test(normalized)) return 0.78;
   if (/sub\s*total/.test(normalized)) return 0.58;

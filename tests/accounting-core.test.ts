@@ -61,6 +61,19 @@ describe("receipt parser", () => {
     ]);
   });
 
+  it("extracts French till items with a trailing article count", () => {
+    const result = parseReceiptText(`OEUFS SOL X30 6,99 € 1\n1 x 6,99 €\nBAC PISTACHE 2,69 € 1\n1 x 2,69 €\nCHAOURCE AOP 250G 3,55 € 1\n1 x 3,55 €\nJAMBON SANS NITRITE 140G 1,59 € 1\n1 x 1,59 €\nNombre de lignes d'articles 4\nA PAYER 14,82 €\nTOTAL HT 14,05 €\nTOTAL TVA 0,77 €\nTIC 14,82 €`);
+
+    expect(result.amountMinor).toBe(1482);
+    expect(result.taxMinor).toBe(77);
+    expect(result.lineItems.map((item) => [item.name, item.lineTotalMinor])).toEqual([
+      ["OEUFS SOL X30", 699],
+      ["BAC PISTACHE", 269],
+      ["CHAOURCE AOP 250G", 355],
+      ["JAMBON SANS NITRITE 140G", 159],
+    ]);
+  });
+
   it("does not add French pre-tax, VAT, or tax-inclusive totals to the cart", () => {
     const result = parseReceiptText(`MARCHE LOCAL\nOEUFS FERMIERS\n3,25\nTOTAL HT\n14,05\nTVA 5,5%\n0,77\nTOTAL TTC\n14,82`);
 
