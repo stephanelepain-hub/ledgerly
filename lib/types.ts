@@ -1,6 +1,16 @@
 export type TransactionType = "expense" | "income";
 export type ExtractionSource = "manual" | "local_ocr" | "cloud_llm";
 
+/** A locally recognized receipt line, always subject to user review. */
+export interface ReceiptLineItem {
+  id: string;
+  name: string;
+  quantity: number | null;
+  unitPriceMinor: number | null;
+  lineTotalMinor: number | null;
+  confidence: number;
+}
+
 export interface Category {
   id: string;
   name: string;
@@ -25,6 +35,7 @@ export interface Transaction {
   receiptUri: string | null;
   ocrText: string | null;
   extractionSource: ExtractionSource;
+  lineItems: ReceiptLineItem[];
   createdAt: string;
   updatedAt: string;
 }
@@ -41,6 +52,7 @@ export interface TransactionInput {
   receiptUri?: string | null;
   ocrText?: string | null;
   extractionSource?: ExtractionSource;
+  lineItems?: ReceiptLineItem[];
 }
 
 export interface DashboardSummary {

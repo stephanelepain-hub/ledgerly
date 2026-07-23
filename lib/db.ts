@@ -6,12 +6,13 @@ import {
   type Category,
   type DashboardSummary,
   type SummaryPeriod,
+  type ReceiptLineItem,
   type Transaction,
   type TransactionInput,
   type TransactionType,
 } from "@/lib/types";
 
-const DATABASE_VERSION = 1;
+const DATABASE_VERSION = 2;
 
 export const PREDEFINED_CATEGORIES: Omit<Category, "createdAt">[] = [
   { id: "groceries", name: "Groceries", icon: "shopping-cart", color: "#0F766E", isCustom: false },
@@ -51,6 +52,7 @@ interface TransactionRow {
   receipt_uri: string | null;
   ocr_text: string | null;
   extraction_source: Transaction["extractionSource"];
+  line_items_json: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -64,6 +66,19 @@ function mapCategory(row: CategoryRow): Category {
     isCustom: row.is_custom === 1,
     createdAt: row.created_at,
   };
+}
+
+function parseLineItems(value: string | null): ReceiptLineItem[] {
+  if (!value) return [];
+  try {
+    const parsed = JSON.parse(value);
+    if (!Array.isArray(parsed)) return [];
+    return parsed.filter((item): item is ReceiptLineItem =>
+      !!item && typeof item.id === "string" && typeof item.name === "string",
+    );
+  } catch {
+    return [];
+  }
 }
 
 function mapTransaction(row: TransactionRow): Transaction {
@@ -82,6 +97,7 @@ function mapTransaction(row: TransactionRow): Transaction {
     receiptUri: row.receipt_uri,
     ocrText: row.ocr_text,
     extractionSource: row.extraction_source,
+    lineItems: parseLineItems(row.line_items_json),
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };
@@ -115,6 +131,7 @@ export async function migrateDatabase(db: SQLiteDatabase): Promise<void> {
         receipt_uri TEXT,
         ocr_text TEXT,
         extraction_source TEXT NOT NULL DEFAULT 'manual',
+        line_items_json TEXT NOT NULL DEFAULT '[]',
         created_at TEXT NOT NULL,
         updated_at TEXT NOT NULL,
         FOREIGN KEY (category_id) REFERENCES categories(id) ON DELETE RESTRICT
@@ -137,7 +154,12 @@ export async function migrateDatabase(db: SQLiteDatabase): Promise<void> {
         createdAt,
       );
     }
-    version = 1;
+    version = 2;
+  }
+
+  if (version < 2) {
+    await db.execAsync("ALTER TABLE transactions ADD COLUMN line_items_json TEXT NOT NULL DEFAULT '[]';");
+    version = 2;
   }
 
   if (version < DATABASE_VERSION) {
@@ -251,8 +273,8 @@ export async function saveTransaction(
   await db.runAsync(
     `INSERT INTO transactions (
       id, type, amount_minor, date, category_id, merchant, description, notes,
-      receipt_uri, ocr_text, extraction_source, created_at, updated_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      receipt_uri, ocr_text, extraction_source, line_items_json, created_at, updated_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     ON CONFLICT(id) DO UPDATE SET
       type = excluded.type,
       amount_minor = excluded.amount_minor,
@@ -264,6 +286,7 @@ export async function saveTransaction(
       receipt_uri = excluded.receipt_uri,
       ocr_text = excluded.ocr_text,
       extraction_source = excluded.extraction_source,
+      line_items_json = excluded.line_items_json,
       updated_at = excluded.updated_at`,
     id,
     input.type,
@@ -276,6 +299,7 @@ export async function saveTransaction(
     input.receiptUri ?? null,
     input.ocrText ?? null,
     input.extractionSource ?? "manual",
+    JSON.stringify(input.lineItems ?? []),
     existing?.created_at ?? now,
     now,
   );
