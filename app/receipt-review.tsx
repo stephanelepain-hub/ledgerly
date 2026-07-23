@@ -16,6 +16,7 @@ import {
   View,
 } from "react-native";
 
+import { ReceiptDatePicker } from "@/components/receipt-date-picker";
 import { ScreenContainer } from "@/components/screen-container";
 import { useColors } from "@/hooks/use-colors";
 import { useAccounting } from "@/lib/accounting-context";
@@ -263,8 +264,7 @@ export default function ReceiptReviewScreen() {
               <TextInput value={amount} onChangeText={setAmount} keyboardType="decimal-pad" placeholder="0.00" placeholderTextColor={colors.muted} style={[styles.amountInput, { color: colors.text }]} returnKeyType="done" />
             </View>
 
-            <FieldLabel label="Date" confidence={extraction?.fieldConfidence.date} />
-            <TextInput value={date} onChangeText={setDate} autoCapitalize="none" placeholder="YYYY-MM-DD" placeholderTextColor={colors.muted} style={[styles.textInput, { color: colors.text, backgroundColor: colors.surface, borderColor: colors.border }]} returnKeyType="done" />
+            <ReceiptDatePicker value={date} onChange={setDate} confidence={extraction?.fieldConfidence.date} />
 
             <FieldLabel label="Merchant" confidence={extraction?.fieldConfidence.merchant} />
             <TextInput value={merchant} onChangeText={setMerchant} placeholder="Merchant or payee" placeholderTextColor={colors.muted} style={[styles.textInput, { color: colors.text, backgroundColor: colors.surface, borderColor: colors.border }]} returnKeyType="next" />
