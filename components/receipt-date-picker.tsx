@@ -13,24 +13,10 @@ type Props = {
   confidence?: number;
 };
 
-function confidenceLabel(value: number): string {
-  if (value >= 0.85) return "High";
-  if (value >= 0.65) return "Review";
-  return "Low";
-}
-
-export function ReceiptDatePicker({ label = "Receipt date", value, onChange, confidence }: Props) {
+export function ReceiptDatePicker({ label = "Receipt date", value, onChange }: Props) {
   const colors = useColors();
   const [showPicker, setShowPicker] = useState(false);
   const selectedDate = parseIsoDate(value);
-  const confidenceColor = confidence === undefined
-    ? colors.muted
-    : confidence >= 0.85
-      ? colors.success
-      : confidence >= 0.65
-        ? colors.warning
-        : colors.error;
-
   if (Platform.OS === "web") {
     return (
       <View style={styles.section}>
@@ -54,12 +40,6 @@ export function ReceiptDatePicker({ label = "Receipt date", value, onChange, con
     <View style={styles.section}>
       <View style={styles.labelRow}>
         <Text style={[styles.label, { color: colors.text }]}>{label}</Text>
-        {confidence !== undefined && (
-          <View style={[styles.confidenceBadge, { backgroundColor: `${confidenceColor}16` }]}>
-            <View style={[styles.confidenceDot, { backgroundColor: confidenceColor }]} />
-            <Text style={[styles.confidenceText, { color: confidenceColor }]}>{confidenceLabel(confidence)}</Text>
-          </View>
-        )}
       </View>
       <Pressable
         accessibilityRole="button"
@@ -99,9 +79,6 @@ const styles = StyleSheet.create({
   section: { gap: 8, marginTop: 6 },
   labelRow: { minHeight: 22, flexDirection: "row", alignItems: "center", justifyContent: "space-between" },
   label: { fontSize: 13, lineHeight: 18, fontWeight: "800" },
-  confidenceBadge: { height: 23, borderRadius: 12, paddingHorizontal: 8, flexDirection: "row", alignItems: "center", gap: 5 },
-  confidenceDot: { width: 6, height: 6, borderRadius: 3 },
-  confidenceText: { fontSize: 10, lineHeight: 14, fontWeight: "800" },
   dateCard: { minHeight: 76, borderRadius: 16, borderWidth: 1, paddingHorizontal: 14, flexDirection: "row", alignItems: "center", gap: 12 },
   icon: { width: 46, height: 46, borderRadius: 14, alignItems: "center", justifyContent: "center" },
   copy: { flex: 1, gap: 2 },
