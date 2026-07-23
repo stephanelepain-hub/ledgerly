@@ -15,6 +15,7 @@ import {
   View,
 } from "react-native";
 
+import { ReceiptDatePicker } from "@/components/receipt-date-picker";
 import { ScreenContainer } from "@/components/screen-container";
 import { useColors } from "@/hooks/use-colors";
 import { useAccounting } from "@/lib/accounting-context";
@@ -43,7 +44,7 @@ export default function TransactionFormScreen() {
     ocrText?: string;
     extractionSource?: string;
   }>();
-  const { categories, findTransaction, upsertTransaction, deleteTransaction } = useAccounting();
+  const { categories, transactions, findTransaction, upsertTransaction, deleteTransaction } = useAccounting();
   const transactionId = first(params.id);
   const existing = transactionId ? findTransaction(transactionId) : undefined;
   const isEditing = !!existing;
@@ -98,6 +99,18 @@ export default function TransactionFormScreen() {
   );
   const isValid = Object.values(errors).every((error) => !error);
   const selectedCategory = categories.find((category) => category.id === categoryId);
+  const possibleDuplicate = useMemo(() => {
+    if (!amountMinor || !date) return undefined;
+    const reference = (merchant.trim() || description.trim()).toLocaleLowerCase();
+    if (!reference) return undefined;
+    return transactions.find((transaction) =>
+      transaction.id !== existing?.id &&
+      transaction.type === type &&
+      transaction.amountMinor === amountMinor &&
+      transaction.date === date &&
+      (transaction.merchant.trim() || transaction.description.trim()).toLocaleLowerCase() === reference,
+    );
+  }, [amountMinor, date, merchant, description, transactions, existing?.id, type]);
 
   const commitSave = async () => {
     if (!amountMinor || !isValid) return;
@@ -136,14 +149,28 @@ export default function TransactionFormScreen() {
     const summary = `${type === "expense" ? "Expense" : "Income"} of ${formatMoney(amountMinor)}${
       merchant.trim() ? ` for ${merchant.trim()}` : ""
     } on ${date}.`;
-    if (Platform.OS === "web") {
-      void commitSave();
+    const confirmSave = () => {
+      if (Platform.OS === "web") {
+        void commitSave();
+        return;
+      }
+      Alert.alert("Confirm transaction", `${summary}\n\nSave this to your on-device ledger?`, [
+        { text: "Keep editing", style: "cancel" },
+        { text: "Confirm & save", onPress: () => void commitSave() },
+      ]);
+    };
+    if (!possibleDuplicate) {
+      confirmSave();
       return;
     }
-    Alert.alert("Confirm transaction", `${summary}\n\nSave this to your on-device ledger?`, [
-      { text: "Keep editing", style: "cancel" },
-      { text: "Confirm & save", onPress: () => void commitSave() },
-    ]);
+    Alert.alert(
+      "Possible duplicate",
+      `A matching ${possibleDuplicate.type} for ${formatMoney(possibleDuplicate.amountMinor)} on ${possibleDuplicate.date} already exists. Save this one anyway?`,
+      [
+        { text: "Keep editing", style: "cancel" },
+        { text: "Save anyway", onPress: confirmSave },
+      ],
+    );
   };
 
   const requestDelete = () => {
@@ -166,10 +193,17 @@ export default function TransactionFormScreen() {
       void commitDelete();
       return;
     }
-    Alert.alert("Delete transaction?", "This permanently removes it from this device.", [
-      { text: "Cancel", style: "cancel" },
-      { text: "Delete", style: "destructive", onPress: () => void commitDelete() },
-    ]);
+    const isReceipt = !!existing.receiptUri;
+    Alert.alert(
+      isReceipt ? "Delete receipt & transaction?" : "Delete transaction?",
+      isReceipt
+        ? "This permanently removes this receipt record from Ledgerly. The original photo in your phone gallery is not deleted."
+        : "This permanently removes it from Ledgerly on this device.",
+      [
+        { text: "Cancel", style: "cancel" },
+        { text: "Delete", style: "destructive", onPress: () => void commitDelete() },
+      ],
+    );
   };
 
   return (
@@ -185,7 +219,17 @@ export default function TransactionFormScreen() {
           <Text style={[styles.navTitle, { color: colors.text }]}>
             {isEditing ? "Edit transaction" : receiptUri ? "Review transaction" : "New transaction"}
           </Text>
-          <View style={styles.navAction} />
+          {isEditing ? (
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel={receiptUri ? "Delete receipt and transaction" : "Delete transaction"}
+              onPress={requestDelete}
+              hitSlop={10}
+              style={styles.deleteNavAction}
+            >
+              <MaterialIcons name="delete-outline" size={22} color={colors.error} />
+            </Pressable>
+          ) : <View style={styles.navAction} />}
         </View>
 
         <ScrollView
@@ -255,14 +299,10 @@ export default function TransactionFormScreen() {
           </View>
 
           <View style={styles.group}>
-            <Field
-              label="Date"
-              value={date}
-              onChangeText={setDate}
-              placeholder="YYYY-MM-DD"
-              keyboardType="numbers-and-punctuation"
-              error={submitted ? errors.date : ""}
-            />
+            <ReceiptDatePicker label="Transaction date" value={date} onChange={setDate} />
+            {submitted && errors.date ? (
+              <Text style={[styles.errorText, { color: colors.error }]}>{errors.date}</Text>
+            ) : null}
             <Field
               label="Merchant"
               value={merchant}
@@ -348,14 +388,14 @@ export default function TransactionFormScreen() {
               </Text>
             </View>
             <Text style={[styles.previewAmount, { color: type === "income" ? colors.success : colors.text }]}>
-              {type === "income" ? "+" : "−"}{amountMinor ? formatMoney(amountMinor) : "$0.00"}
+              {type === "income" ? "+" : "−"}{amountMinor ? formatMoney(amountMinor) : formatMoney(0)}
             </Text>
           </View>
 
           {isEditing && (
             <Pressable onPress={requestDelete} style={({ pressed }) => [styles.deleteButton, pressed && styles.pressed]}>
               <MaterialIcons name="delete-outline" size={20} color={colors.error} />
-              <Text style={[styles.deleteText, { color: colors.error }]}>Delete transaction</Text>
+              <Text style={[styles.deleteText, { color: colors.error }]}>{receiptUri ? "Delete receipt & transaction" : "Delete transaction"}</Text>
             </Pressable>
           )}
         </ScrollView>
@@ -405,6 +445,7 @@ const styles = StyleSheet.create({
   flex: { flex: 1 },
   nav: { minHeight: 52, borderBottomWidth: StyleSheet.hairlineWidth, paddingHorizontal: 16, flexDirection: "row", alignItems: "center", justifyContent: "space-between" },
   navAction: { minWidth: 64, minHeight: 44, justifyContent: "center" },
+  deleteNavAction: { minWidth: 64, minHeight: 44, alignItems: "flex-end", justifyContent: "center" },
   cancelText: { fontSize: 16, lineHeight: 22, fontWeight: "600" },
   navTitle: { fontSize: 16, lineHeight: 22, fontWeight: "800" },
   content: { padding: 18, paddingBottom: 28, gap: 18 },

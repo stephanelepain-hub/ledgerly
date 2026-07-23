@@ -7,6 +7,7 @@ import { useColors } from "@/hooks/use-colors";
 import { formatLongDate, isoDateFromDate, parseIsoDate } from "@/lib/types";
 
 type Props = {
+  label?: string;
   value: string;
   onChange: (value: string) => void;
   confidence?: number;
@@ -18,7 +19,7 @@ function confidenceLabel(value: number): string {
   return "Low";
 }
 
-export function ReceiptDatePicker({ value, onChange, confidence }: Props) {
+export function ReceiptDatePicker({ label = "Receipt date", value, onChange, confidence }: Props) {
   const colors = useColors();
   const [showPicker, setShowPicker] = useState(false);
   const selectedDate = parseIsoDate(value);
@@ -34,7 +35,7 @@ export function ReceiptDatePicker({ value, onChange, confidence }: Props) {
     return (
       <View style={styles.section}>
         <View style={styles.labelRow}>
-          <Text style={[styles.label, { color: colors.text }]}>Receipt date</Text>
+          <Text style={[styles.label, { color: colors.text }]}>{label}</Text>
         </View>
         <TextInput
           value={value}
@@ -52,7 +53,7 @@ export function ReceiptDatePicker({ value, onChange, confidence }: Props) {
   return (
     <View style={styles.section}>
       <View style={styles.labelRow}>
-        <Text style={[styles.label, { color: colors.text }]}>Receipt date</Text>
+        <Text style={[styles.label, { color: colors.text }]}>{label}</Text>
         {confidence !== undefined && (
           <View style={[styles.confidenceBadge, { backgroundColor: `${confidenceColor}16` }]}>
             <View style={[styles.confidenceDot, { backgroundColor: confidenceColor }]} />
@@ -62,7 +63,7 @@ export function ReceiptDatePicker({ value, onChange, confidence }: Props) {
       </View>
       <Pressable
         accessibilityRole="button"
-        accessibilityLabel="Choose receipt date"
+        accessibilityLabel={`Choose ${label.toLocaleLowerCase()}`}
         onPress={() => setShowPicker(true)}
         style={({ pressed }) => [
           styles.dateCard,

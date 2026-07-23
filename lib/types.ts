@@ -124,9 +124,28 @@ export function getPeriodStart(period: SummaryPeriod, now = new Date()): string 
 }
 
 export function parseAmountToMinor(value: string): number | null {
-  const normalized = value.replace(/[^0-9.,-]/g, "").replace(/,/g, "");
-  if (!normalized || normalized === "-" || normalized === ".") return null;
-  const parsed = Number(normalized);
+  const normalized = value.replace(/[^0-9.,]/g, "");
+  if (!/\d/.test(normalized)) return null;
+
+  const lastComma = normalized.lastIndexOf(",");
+  const lastDot = normalized.lastIndexOf(".");
+  let decimalIndex = -1;
+
+  if (lastComma >= 0 && lastDot >= 0) {
+    decimalIndex = Math.max(lastComma, lastDot);
+  } else {
+    const separatorIndex = Math.max(lastComma, lastDot);
+    if (separatorIndex >= 0) {
+      const fractionLength = normalized.length - separatorIndex - 1;
+      // A single separator followed by one or two digits is a decimal mark.
+      // Three digits is treated as a thousands group: 1,234 or 1.234.
+      if (fractionLength > 0 && fractionLength <= 2) decimalIndex = separatorIndex;
+    }
+  }
+
+  const whole = (decimalIndex >= 0 ? normalized.slice(0, decimalIndex) : normalized).replace(/[.,]/g, "");
+  const fraction = decimalIndex >= 0 ? normalized.slice(decimalIndex + 1).replace(/[.,]/g, "") : "";
+  const parsed = Number(`${whole || "0"}.${fraction || "0"}`);
   if (!Number.isFinite(parsed) || parsed <= 0) return null;
   return Math.round(parsed * 100);
 }
