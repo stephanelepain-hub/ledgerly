@@ -280,7 +280,7 @@ export default function ReceiptReviewScreen() {
             <View style={styles.cartHeader}>
               <View>
                 <Text style={[styles.cartTitle, { color: colors.text }]}>Shopping cart</Text>
-                <Text style={[styles.cartBody, { color: colors.muted }]}>Local OCR suggestions — edit before saving.</Text>
+                <Text style={[styles.cartBody, { color: colors.muted }]}>Items found on this receipt — edit before saving.</Text>
               </View>
               <Text style={[styles.cartCount, { color: colors.primary }]}>{lineItems.length} items</Text>
             </View>
