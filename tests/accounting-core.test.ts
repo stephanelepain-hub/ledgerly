@@ -52,6 +52,15 @@ describe("receipt parser", () => {
     ]);
   });
 
+  it("extracts item prices placed on the following OCR line", () => {
+    const result = parseReceiptText(`FRESH SHOP\nFREE RANGE EGGS\n3.25\nBANANAS\n2 x 0.80\nTOTAL 4.85`);
+
+    expect(result.lineItems.map((item) => [item.name, item.quantity, item.lineTotalMinor])).toEqual([
+      ["FREE RANGE EGGS", null, 325],
+      ["BANANAS", 2, 160],
+    ]);
+  });
+
   it("joins overlapping long-receipt OCR sections once", () => {
     expect(mergeReceiptSections([
       "Market\nApples 2.50\nPasta 1.20",
