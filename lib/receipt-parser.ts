@@ -17,6 +17,7 @@ export interface ReceiptExtraction {
   fieldConfidence: ReceiptFieldConfidence;
   overallConfidence: number;
   warnings: string[];
+  merchantAddress?: string | null;
   /** Total before VAT/TVA, when it can be identified locally. */
   preTaxMinor?: number | null;
   /** TVA/VAT included in the total, when it can be identified locally. */
@@ -443,6 +444,24 @@ function extractMerchant(lines: string[]): { value: string; confidence: number }
   return { value: titleCaseMerchant(best.line), confidence };
 }
 
+function extractMerchantAddress(lines: string[], merchant: string): string | null {
+  const addressCue = /\b\d{5}\b|\b(?:zac|rue|avenue|av\.?|boulevard|bd\.?|route|chemin|place|street|road|lane|drive)\b/i;
+  const candidate = lines.slice(0, 16).find((line) => addressCue.test(line));
+  if (!candidate) return null;
+
+  const escapedMerchant = merchant.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const withoutMerchant = merchant
+    ? candidate.replace(new RegExp(`\\b${escapedMerchant}\\b`, "i"), "")
+    : candidate;
+  const cleaned = withoutMerchant
+    .replace(/\s+,/g, ",")
+    .replace(/,{2,}/g, ",")
+    .replace(/^\s*,\s*|\s*,\s*$/g, "")
+    .replace(/\s+/g, " ")
+    .trim();
+  return cleaned.length >= 6 ? cleaned : null;
+}
+
 function extractCategory(text: string, merchant: string): { value: string; confidence: number } {
   const haystack = `${merchant}\n${text}`.toLocaleLowerCase();
   let bestId = "other";
@@ -475,7 +494,9 @@ export function parseReceiptText(rawText: string, visualRows?: ReceiptOcrLine[])
   const analysisLines = [...lines, ...visualLines];
   const amount = extractAmount(analysisLines);
   const date = extractDate(text);
-  const merchant = extractMerchant(visualLines.length ? visualLines : lines);
+  const merchantLines = visualLines.length ? visualLines : lines;
+  const merchant = extractMerchant(merchantLines);
+  const merchantAddress = extractMerchantAddress(merchantLines, merchant.value);
   const category = extractCategory(text, merchant.value);
   const preTaxMinor = extractPreTax(analysisLines);
   const taxMinor = extractTax(analysisLines);
@@ -506,11 +527,14 @@ export function parseReceiptText(rawText: string, visualRows?: ReceiptOcrLine[])
     amountMinor: amount.value,
     date: date.value,
     merchant: merchant.value,
-    description: merchant.value ? `Receipt from ${merchant.value}` : "Receipt purchase",
+    description: merchant.value
+      ? `Receipt from ${merchant.value}${merchantAddress ? ` — ${merchantAddress}` : ""}`
+      : "Receipt purchase",
     categoryId: category.value,
     fieldConfidence,
     overallConfidence,
     warnings,
+    merchantAddress,
     preTaxMinor,
     taxMinor,
     lineItems,

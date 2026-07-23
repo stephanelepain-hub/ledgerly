@@ -112,6 +112,8 @@ describe("receipt parser", () => {
     );
 
     expect(result.merchant).toBe("ALDI");
+    expect(result.merchantAddress).toBe("ZAC de la Poutche, 32220 Lombez, France");
+    expect(result.description).toBe("Receipt from ALDI — ZAC de la Poutche, 32220 Lombez, France");
     expect(result.amountMinor).toBe(1482);
     expect(result.preTaxMinor).toBe(1405);
     expect(result.taxMinor).toBe(77);
