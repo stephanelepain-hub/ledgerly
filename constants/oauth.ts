@@ -26,6 +26,24 @@ export const OWNER_NAME = env.ownerName;
 export const API_BASE_URL = env.apiBaseUrl;
 
 /**
+ * Cloud receipt retry is opt-in and is available only to builds that embed a
+ * valid HTTPS endpoint. A standalone local-test APK has no Metro host to
+ * derive a server from, so it must not offer a retry that would fail with an
+ * invalid relative URL.
+ */
+export function hasConfiguredCloudRetryEndpoint(): boolean {
+  const baseUrl = API_BASE_URL.trim();
+  if (!baseUrl) return false;
+
+  try {
+    const url = new URL(baseUrl);
+    return url.protocol === "https:" && !url.username && !url.password;
+  } catch {
+    return false;
+  }
+}
+
+/**
  * Get the API base URL, deriving from current hostname if not set.
  * Metro runs on 8081, API server runs on 3000.
  * URL pattern: https://PORT-sandboxid.region.domain
