@@ -31,7 +31,7 @@ import {
 } from "@/lib/receipt-parser";
 import { hasConfiguredCloudRetryEndpoint } from "@/constants/oauth";
 import { trpc } from "@/lib/trpc";
-import { createId, parseAmountToMinor, todayIsoDate, type ReceiptLineItem } from "@/lib/types";
+import { createId, formatMoney, parseAmountToMinor, todayIsoDate, type ReceiptLineItem } from "@/lib/types";
 
 function confidenceLabel(value: number): string {
   if (value >= 0.85) return "High";
@@ -58,7 +58,7 @@ export default function ReceiptReviewScreen() {
   );
   const [isSaving, setIsSaving] = useState(false);
   const [lineItems, setLineItems] = useState<ReceiptLineItem[]>(initial?.lineItems ?? []);
-  const [showRawText, setShowRawText] = useState(false);
+  const [taxMinor, setTaxMinor] = useState(initial?.taxMinor ?? null);
 
   const cloudRetry = trpc.receipt.extractFromText.useMutation();
   const amountMinor = useMemo(() => parseAmountToMinor(amount), [amount]);
@@ -74,6 +74,7 @@ export default function ReceiptReviewScreen() {
     setMerchant(next.merchant);
     setDescription(next.description);
     setCategoryId(next.categoryId);
+    setTaxMinor(next.taxMinor ?? null);
     setLineItems(next.lineItems);
   };
 
@@ -241,6 +242,13 @@ export default function ReceiptReviewScreen() {
                 )}
               </View>
             </View>
+            {taxMinor !== null && (
+              <View style={[styles.taxSummary, { borderTopColor: colors.border }]}>
+                <MaterialIcons name="receipt" size={16} color={colors.muted} />
+                <Text style={[styles.taxSummaryLabel, { color: colors.muted }]}>TVA included</Text>
+                <Text style={[styles.taxSummaryValue, { color: colors.text }]}>{formatMoney(taxMinor)}</Text>
+              </View>
+            )}
           </View>
 
           {!!draft.error && (
@@ -286,28 +294,12 @@ export default function ReceiptReviewScreen() {
               </View>
             ))}
             {lineItems.length === 0 && (
-              <Text style={[styles.emptyCartMessage, { color: colors.muted }]}>No product lines found yet. Add an item, or open OCR diagnostics below to check the recognized text.</Text>
+              <Text style={[styles.emptyCartMessage, { color: colors.muted }]}>No product lines could be matched with prices. Add an item manually.</Text>
             )}
             <View style={styles.cartFooter}>
               <Pressable onPress={addLineItem} style={({ pressed }) => [styles.addItem, pressed && styles.pressed]}><MaterialIcons name="add" size={18} color={colors.primary} /><Text style={[styles.addItemText, { color: colors.primary }]}>Add item</Text></Pressable>
             </View>
           </View>
-
-          {!!draft.ocrText && (
-            <Pressable onPress={() => setShowRawText((visible) => !visible)} style={[styles.rawTextToggle, { borderColor: colors.border, backgroundColor: colors.surface }]}>
-              <MaterialIcons name="subject" size={19} color={colors.primary} />
-              <View style={styles.rawTextToggleCopy}>
-                <Text style={[styles.rawTextToggleLabel, { color: colors.text }]}>{showRawText ? "Hide OCR diagnostics" : "OCR diagnostics"}</Text>
-                <Text style={[styles.rawTextToggleHint, { color: colors.muted }]}>All recognized text, including totals and payment details</Text>
-              </View>
-              <MaterialIcons name={showRawText ? "expand-less" : "expand-more"} size={21} color={colors.muted} />
-            </Pressable>
-          )}
-          {showRawText && !!draft.ocrText && (
-            <View style={[styles.rawTextCard, { borderColor: colors.border, backgroundColor: colors.surface }]}>
-              <Text style={[styles.rawText, { color: colors.muted }]}>{draft.ocrText}</Text>
-            </View>
-          )}
 
           {!!extraction?.warnings.length && (
             <View style={styles.warningList}>
@@ -321,7 +313,7 @@ export default function ReceiptReviewScreen() {
           )}
 
           <View style={styles.formSection}>
-            <FieldLabel label="Amount" confidence={extraction?.fieldConfidence.amount} />
+            <FieldLabel label={taxMinor !== null ? "Total TTC" : "Amount"} confidence={extraction?.fieldConfidence.amount} />
             <View style={[styles.amountInputWrap, { backgroundColor: colors.surface, borderColor: !amountMinor && amount ? colors.error : colors.border }]}>
               <Text style={[styles.currency, { color: colors.muted }]}>€</Text>
               <TextInput value={amount} onChangeText={setAmount} keyboardType="decimal-pad" placeholder="0.00" placeholderTextColor={colors.muted} style={[styles.amountInput, { color: colors.text }]} returnKeyType="done" />
@@ -397,6 +389,9 @@ const styles = StyleSheet.create({
   sourceText: { fontSize: 11, lineHeight: 15, fontWeight: "800" },
   receiptMetaRight: { alignItems: "flex-end", gap: 2 },
   confidenceSummary: { fontSize: 11, lineHeight: 15, flexShrink: 1, textAlign: "right" },
+  taxSummary: { minHeight: 38, borderTopWidth: StyleSheet.hairlineWidth, paddingHorizontal: 12, flexDirection: "row", alignItems: "center", gap: 7 },
+  taxSummaryLabel: { flex: 1, fontSize: 12, lineHeight: 17, fontWeight: "700" },
+  taxSummaryValue: { fontSize: 13, lineHeight: 18, fontWeight: "800" },
   warningCard: { borderWidth: 1, borderRadius: 15, padding: 12, flexDirection: "row", alignItems: "flex-start", gap: 9 },
   warningCopy: { flex: 1, gap: 2 },
   warningTitle: { fontSize: 13, lineHeight: 18, fontWeight: "800" },
@@ -408,12 +403,6 @@ const styles = StyleSheet.create({
   cloudBody: { fontSize: 11, lineHeight: 16 },
   cloudButton: { minWidth: 58, height: 36, borderRadius: 11, borderWidth: 1, alignItems: "center", justifyContent: "center", paddingHorizontal: 10 },
   cloudButtonText: { fontSize: 12, lineHeight: 16, fontWeight: "800" },
-  rawTextToggle: { minHeight: 46, borderWidth: 1, borderRadius: 14, paddingHorizontal: 12, flexDirection: "row", alignItems: "center", gap: 8 },
-  rawTextToggleCopy: { flex: 1, gap: 1 },
-  rawTextToggleLabel: { fontSize: 13, lineHeight: 18, fontWeight: "700" },
-  rawTextToggleHint: { fontSize: 10, lineHeight: 14 },
-  rawTextCard: { borderWidth: 1, borderRadius: 14, padding: 12 },
-  rawText: { fontSize: 12, lineHeight: 18, fontFamily: "monospace" },
   cartCard: { borderWidth: 1, borderRadius: 16, padding: 12, gap: 8 },
   cartHeader: { flexDirection: "row", justifyContent: "space-between", alignItems: "flex-start", gap: 10 },
   cartTitle: { fontSize: 15, lineHeight: 20, fontWeight: "800" },
