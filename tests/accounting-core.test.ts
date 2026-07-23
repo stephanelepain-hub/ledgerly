@@ -65,11 +65,16 @@ describe("receipt parser", () => {
     const result = parseReceiptText(
       `OEUFS SOL X30\n1 X\nBAC PISTACHE\n1 X\n6,99 € 1\n6,99 €\n2,69 € 1\n2,69 €\nA PAYER 14,82 €`,
       [
-        { text: "OEUFS SOL X30 6,99 € 1", top: 10, left: 0, elements: [{ text: "OEUFS SOL X30", left: 0 }, { text: "6,99 € 1", left: 220 }] },
-        { text: "1 X 6,99 €", top: 20, left: 0, elements: [{ text: "1 X", left: 20 }, { text: "6,99 €", left: 220 }] },
-        { text: "BAC PISTACHE 2,69 € 1", top: 30, left: 0, elements: [{ text: "BAC PISTACHE", left: 0 }, { text: "2,69 € 1", left: 220 }] },
-        { text: "1 X 2,69 €", top: 40, left: 0, elements: [{ text: "1 X", left: 20 }, { text: "2,69 €", left: 220 }] },
-        { text: "A PAYER 14,82 €", top: 50, left: 0, elements: [{ text: "A PAYER", left: 0 }, { text: "14,82 €", left: 220 }] },
+        { text: "OEUFS SOL X30", top: 10, bottom: 18, left: 0, elements: [{ text: "OEUFS SOL X30", left: 0 }] },
+        { text: "6,99 € 1", top: 11, bottom: 19, left: 220, elements: [{ text: "6,99 € 1", left: 220 }] },
+        { text: "1 X", top: 28, bottom: 36, left: 20, elements: [{ text: "1 X", left: 20 }] },
+        { text: "6,99 €", top: 29, bottom: 37, left: 220, elements: [{ text: "6,99 €", left: 220 }] },
+        { text: "BAC PISTACHE", top: 48, bottom: 56, left: 0, elements: [{ text: "BAC PISTACHE", left: 0 }] },
+        { text: "2,69 € 1", top: 49, bottom: 57, left: 220, elements: [{ text: "2,69 € 1", left: 220 }] },
+        { text: "1 X", top: 66, bottom: 74, left: 20, elements: [{ text: "1 X", left: 20 }] },
+        { text: "2,69 €", top: 67, bottom: 75, left: 220, elements: [{ text: "2,69 €", left: 220 }] },
+        { text: "A PAYER", top: 88, bottom: 96, left: 0, elements: [{ text: "A PAYER", left: 0 }] },
+        { text: "14,82 €", top: 89, bottom: 97, left: 220, elements: [{ text: "14,82 €", left: 220 }] },
       ],
     );
 
@@ -95,6 +100,7 @@ describe("receipt parser", () => {
   it("does not add French pre-tax, VAT, or tax-inclusive totals to the cart", () => {
     const result = parseReceiptText(`MARCHE LOCAL\nOEUFS FERMIERS\n3,25\nTOTAL HT\n14,05\nTVA 5,5%\n0,77\nTOTAL TTC\n14,82`);
 
+    expect(result.preTaxMinor).toBe(1405);
     expect(result.taxMinor).toBe(77);
     expect(result.lineItems.map((item) => [item.name, item.lineTotalMinor])).toEqual([
       ["OEUFS FERMIERS", 325],
