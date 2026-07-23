@@ -148,6 +148,7 @@ export function AccountingProvider({ children }: { children: ReactNode }) {
       receiptUri: input.receiptUri ?? null,
       ocrText: input.ocrText ?? null,
       extractionSource: input.extractionSource ?? "manual",
+      lineItems: input.lineItems ?? existing?.lineItems ?? [],
       createdAt: existing?.createdAt ?? now,
       updatedAt: now,
     };

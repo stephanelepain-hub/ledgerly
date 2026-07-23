@@ -5,7 +5,9 @@ export type ReceiptDraftStatus = "selected" | "processing" | "ready" | "error";
 
 export interface ReceiptDraft {
   id: string;
+  /** The first image remains the preview/legacy attachment; every section stays in memory until confirmation. */
   imageUri: string;
+  imageUris: string[];
   ocrText: string;
   extraction: ReceiptExtraction | null;
   status: ReceiptDraftStatus;
@@ -16,10 +18,12 @@ export interface ReceiptDraft {
 
 const receiptDrafts = new Map<string, ReceiptDraft>();
 
-export function createReceiptDraft(imageUri: string): ReceiptDraft {
+export function createReceiptDraft(imageUris: string[]): ReceiptDraft {
+  if (!imageUris.length) throw new Error("Add at least one receipt section before reviewing it.");
   const draft: ReceiptDraft = {
     id: createId("receipt"),
-    imageUri,
+    imageUri: imageUris[0],
+    imageUris: [...imageUris],
     ocrText: "",
     extraction: null,
     status: "selected",

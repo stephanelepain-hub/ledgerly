@@ -31,7 +31,7 @@ import {
 } from "@/lib/receipt-parser";
 import { hasConfiguredCloudRetryEndpoint } from "@/constants/oauth";
 import { trpc } from "@/lib/trpc";
-import { parseAmountToMinor, todayIsoDate } from "@/lib/types";
+import { createId, formatMoney, parseAmountToMinor, todayIsoDate, type ReceiptLineItem } from "@/lib/types";
 
 function confidenceLabel(value: number): string {
   if (value >= 0.85) return "High";
@@ -57,6 +57,8 @@ export default function ReceiptReviewScreen() {
     draft?.extractionSource ?? "local_ocr",
   );
   const [isSaving, setIsSaving] = useState(false);
+  const [lineItems, setLineItems] = useState<ReceiptLineItem[]>(initial?.lineItems ?? []);
+  const [showRawText, setShowRawText] = useState(false);
 
   const cloudRetry = trpc.receipt.extractFromText.useMutation();
   const amountMinor = useMemo(() => parseAmountToMinor(amount), [amount]);
@@ -64,6 +66,7 @@ export default function ReceiptReviewScreen() {
     hasConfiguredCloudRetryEndpoint() &&
     !!draft?.ocrText &&
     (!extraction || extraction.overallConfidence < HIGH_CONFIDENCE_THRESHOLD);
+  const lineItemTotalMinor = lineItems.reduce((sum, item) => sum + (item.lineTotalMinor ?? 0), 0);
 
   const applyExtraction = (next: ReceiptExtraction) => {
     setExtraction(next);
@@ -72,6 +75,17 @@ export default function ReceiptReviewScreen() {
     setMerchant(next.merchant);
     setDescription(next.description);
     setCategoryId(next.categoryId);
+    setLineItems(next.lineItems);
+  };
+
+  const updateLineItem = (id: string, update: Partial<ReceiptLineItem>) => {
+    setLineItems((items) => items.map((item) => item.id === id ? { ...item, ...update } : item));
+  };
+
+  const addLineItem = () => {
+    setLineItems((items) => [...items, {
+      id: createId("item"), name: "", quantity: null, unitPriceMinor: null, lineTotalMinor: null, confidence: 0,
+    }]);
   };
 
   const retryWithCloud = () => {
@@ -103,6 +117,7 @@ export default function ReceiptReviewScreen() {
                 },
                 overallConfidence: result.overallConfidence,
                 warnings: result.warning ? [result.warning] : [],
+                lineItems,
               };
               applyExtraction(next);
               setSource("cloud_llm");
@@ -164,6 +179,9 @@ export default function ReceiptReviewScreen() {
         receiptUri: draft.imageUri,
         ocrText: draft.ocrText || null,
         extractionSource: source,
+        lineItems: lineItems
+          .map((item) => ({ ...item, name: item.name.trim() }))
+          .filter((item) => item.name.length > 0),
       });
       removeReceiptDraft(draft.id);
       if (Platform.OS !== "web") {
@@ -217,9 +235,12 @@ export default function ReceiptReviewScreen() {
                 <MaterialIcons name={source === "cloud_llm" ? "cloud-done" : "offline-bolt"} size={15} color={colors.primary} />
                 <Text style={[styles.sourceText, { color: colors.primary }]}>{source === "cloud_llm" ? "Cloud text retry" : "On-device OCR"}</Text>
               </View>
-              {extraction && (
-                <Text style={[styles.confidenceSummary, { color: colors.muted }]}>{Math.round(extraction.overallConfidence * 100)}% extraction confidence</Text>
-              )}
+              <View style={styles.receiptMetaRight}>
+                {draft.imageUris.length > 1 && <Text style={[styles.confidenceSummary, { color: colors.muted }]}>{draft.imageUris.length} sections</Text>}
+                {extraction && (
+                  <Text style={[styles.confidenceSummary, { color: colors.muted }]}>{Math.round(extraction.overallConfidence * 100)}% extraction confidence</Text>
+                )}
+              </View>
             </View>
           </View>
 
@@ -247,6 +268,42 @@ export default function ReceiptReviewScreen() {
               </Pressable>
             </View>
           )}
+
+          {!!draft.ocrText && (
+            <Pressable onPress={() => setShowRawText((visible) => !visible)} style={[styles.rawTextToggle, { borderColor: colors.border, backgroundColor: colors.surface }]}>
+              <MaterialIcons name="subject" size={19} color={colors.primary} />
+              <Text style={[styles.rawTextToggleLabel, { color: colors.text }]}>{showRawText ? "Hide recognized text" : "View recognized text"}</Text>
+              <MaterialIcons name={showRawText ? "expand-less" : "expand-more"} size={21} color={colors.muted} />
+            </Pressable>
+          )}
+          {showRawText && !!draft.ocrText && (
+            <View style={[styles.rawTextCard, { borderColor: colors.border, backgroundColor: colors.surface }]}>
+              <Text style={[styles.rawText, { color: colors.muted }]}>{draft.ocrText}</Text>
+            </View>
+          )}
+
+          <View style={[styles.cartCard, { borderColor: colors.border, backgroundColor: colors.surface }]}>
+            <View style={styles.cartHeader}>
+              <View>
+                <Text style={[styles.cartTitle, { color: colors.text }]}>Shopping cart</Text>
+                <Text style={[styles.cartBody, { color: colors.muted }]}>Local OCR suggestions — edit before saving.</Text>
+              </View>
+              <Text style={[styles.cartCount, { color: colors.primary }]}>{lineItems.length} items</Text>
+            </View>
+            {lineItems.map((item) => (
+              <View key={item.id} style={[styles.cartRow, { borderTopColor: colors.border }]}>
+                <TextInput value={item.name} onChangeText={(name) => updateLineItem(item.id, { name })} placeholder="Item name" placeholderTextColor={colors.muted} style={[styles.cartName, { color: colors.text }]} />
+                <TextInput value={item.lineTotalMinor ? (item.lineTotalMinor / 100).toFixed(2) : ""} onChangeText={(value) => updateLineItem(item.id, { lineTotalMinor: parseAmountToMinor(value) })} keyboardType="decimal-pad" placeholder="Price" placeholderTextColor={colors.muted} style={[styles.cartPrice, { color: colors.text, borderColor: colors.border }]} />
+                <Pressable onPress={() => setLineItems((items) => items.filter((candidate) => candidate.id !== item.id))} hitSlop={9} accessibilityLabel={`Remove ${item.name || "item"}`}>
+                  <MaterialIcons name="close" size={19} color={colors.muted} />
+                </Pressable>
+              </View>
+            ))}
+            <View style={styles.cartFooter}>
+              <Pressable onPress={addLineItem} style={({ pressed }) => [styles.addItem, pressed && styles.pressed]}><MaterialIcons name="add" size={18} color={colors.primary} /><Text style={[styles.addItemText, { color: colors.primary }]}>Add item</Text></Pressable>
+              {!!lineItemTotalMinor && <Text style={[styles.cartTotal, { color: colors.muted }]}>Items {formatMoney(lineItemTotalMinor)}</Text>}
+            </View>
+          </View>
 
           {!!extraction?.warnings.length && (
             <View style={styles.warningList}>
@@ -334,6 +391,7 @@ const styles = StyleSheet.create({
   receiptMeta: { minHeight: 48, paddingHorizontal: 12, flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 10 },
   sourceBadge: { minHeight: 28, borderRadius: 14, paddingHorizontal: 9, flexDirection: "row", alignItems: "center", gap: 5 },
   sourceText: { fontSize: 11, lineHeight: 15, fontWeight: "800" },
+  receiptMetaRight: { alignItems: "flex-end", gap: 2 },
   confidenceSummary: { fontSize: 11, lineHeight: 15, flexShrink: 1, textAlign: "right" },
   warningCard: { borderWidth: 1, borderRadius: 15, padding: 12, flexDirection: "row", alignItems: "flex-start", gap: 9 },
   warningCopy: { flex: 1, gap: 2 },
@@ -346,6 +404,22 @@ const styles = StyleSheet.create({
   cloudBody: { fontSize: 11, lineHeight: 16 },
   cloudButton: { minWidth: 58, height: 36, borderRadius: 11, borderWidth: 1, alignItems: "center", justifyContent: "center", paddingHorizontal: 10 },
   cloudButtonText: { fontSize: 12, lineHeight: 16, fontWeight: "800" },
+  rawTextToggle: { minHeight: 46, borderWidth: 1, borderRadius: 14, paddingHorizontal: 12, flexDirection: "row", alignItems: "center", gap: 8 },
+  rawTextToggleLabel: { flex: 1, fontSize: 13, lineHeight: 18, fontWeight: "700" },
+  rawTextCard: { borderWidth: 1, borderRadius: 14, padding: 12 },
+  rawText: { fontSize: 12, lineHeight: 18, fontFamily: "monospace" },
+  cartCard: { borderWidth: 1, borderRadius: 16, padding: 12, gap: 8 },
+  cartHeader: { flexDirection: "row", justifyContent: "space-between", alignItems: "flex-start", gap: 10 },
+  cartTitle: { fontSize: 15, lineHeight: 20, fontWeight: "800" },
+  cartBody: { marginTop: 2, fontSize: 11, lineHeight: 16 },
+  cartCount: { fontSize: 12, lineHeight: 17, fontWeight: "800" },
+  cartRow: { minHeight: 44, borderTopWidth: StyleSheet.hairlineWidth, paddingTop: 8, flexDirection: "row", alignItems: "center", gap: 8 },
+  cartName: { flex: 1, minWidth: 0, minHeight: 36, fontSize: 14, lineHeight: 19, paddingVertical: 0 },
+  cartPrice: { width: 78, minHeight: 36, borderWidth: 1, borderRadius: 10, paddingHorizontal: 8, textAlign: "right", fontSize: 13, lineHeight: 18 },
+  cartFooter: { paddingTop: 2, flexDirection: "row", alignItems: "center", justifyContent: "space-between" },
+  addItem: { minHeight: 34, flexDirection: "row", alignItems: "center", gap: 4 },
+  addItemText: { fontSize: 12, lineHeight: 17, fontWeight: "800" },
+  cartTotal: { fontSize: 12, lineHeight: 17, fontWeight: "700" },
   warningList: { gap: 6 },
   warningLine: { flexDirection: "row", alignItems: "center", gap: 7 },
   warningLineText: { fontSize: 12, lineHeight: 17, flex: 1 },

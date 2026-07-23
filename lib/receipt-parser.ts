@@ -1,4 +1,4 @@
-import { todayIsoDate } from "@/lib/types";
+import { createId, todayIsoDate, type ReceiptLineItem } from "@/lib/types";
 
 export interface ReceiptFieldConfidence {
   amount: number;
@@ -16,6 +16,7 @@ export interface ReceiptExtraction {
   fieldConfidence: ReceiptFieldConfidence;
   overallConfidence: number;
   warnings: string[];
+  lineItems: ReceiptLineItem[];
 }
 
 interface AmountCandidate {
@@ -87,6 +88,72 @@ const MERCHANT_NOISE = [
 ];
 
 export const HIGH_CONFIDENCE_THRESHOLD = 0.72;
+
+function normalizedLine(value: string): string {
+  return value.trim().replace(/\s+/g, " ").toLocaleLowerCase();
+}
+
+/**
+ * Joins close-up OCR passes of a long receipt without duplicating the lines
+ * deliberately overlapped between adjacent photos. It never uploads images
+ * or text; callers keep the source images in the in-memory receipt draft.
+ */
+export function mergeReceiptSections(sections: string[]): string {
+  const merged: string[] = [];
+  for (const section of sections) {
+    const incoming = section.split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
+    if (!incoming.length) continue;
+
+    const maximumOverlap = Math.min(12, merged.length, incoming.length);
+    let overlap = 0;
+    for (let size = maximumOverlap; size > 0; size -= 1) {
+      const prior = merged.slice(-size).map(normalizedLine);
+      const next = incoming.slice(0, size).map(normalizedLine);
+      if (prior.every((line, index) => line === next[index])) {
+        overlap = size;
+        break;
+      }
+    }
+    merged.push(...incoming.slice(overlap));
+  }
+  return merged.join("\n");
+}
+
+const ITEM_NOISE = /\b(sub\s*total|grand\s*total|total|tax|tva|vat|change|cash|card|visa|mastercard|payment|amount\s*due|balance\s*due|discount|coupon|loyalty|thank\s*you)\b/i;
+
+/**
+ * Finds conservative item-and-price candidates. The receipt total remains
+ * authoritative: items are suggestions for the user to edit, not a second
+ * calculation of the transaction amount.
+ */
+export function extractReceiptLineItems(lines: string[]): ReceiptLineItem[] {
+  const items: ReceiptLineItem[] = [];
+  const seen = new Set<string>();
+  for (const rawLine of lines) {
+    const line = rawLine.replace(/\s+/g, " ").trim();
+    if (line.length < 3 || ITEM_NOISE.test(line)) continue;
+    const match = /^(.*?)(?:\s+)(?:[€$£]\s*)?(\d{1,3}(?:[ ,]\d{3})*[.,]\d{2}|\d+[.,]\d{2})\s*$/u.exec(line);
+    if (!match) continue;
+    const name = match[1].replace(/^[-*•\d\s]+/, "").trim();
+    const lineTotalMinor = normalizeAmount(match[2]);
+    if (!lineTotalMinor || !/[\p{L}]/u.test(name) || name.length > 100) continue;
+
+    const quantityMatch = /(?:^|\s)(\d+(?:[.,]\d+)?)\s*[x×]/iu.exec(name);
+    const quantity = quantityMatch ? Number(quantityMatch[1].replace(",", ".")) : null;
+    const key = `${normalizedLine(name)}|${lineTotalMinor}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    items.push({
+      id: createId("item"),
+      name,
+      quantity: quantity && Number.isFinite(quantity) && quantity > 0 ? quantity : null,
+      unitPriceMinor: quantity && quantity > 0 ? Math.round(lineTotalMinor / quantity) : null,
+      lineTotalMinor,
+      confidence: 0.62,
+    });
+  }
+  return items;
+}
 
 function clamp(value: number): number {
   return Math.max(0, Math.min(1, value));
@@ -263,6 +330,7 @@ export function parseReceiptText(rawText: string): ReceiptExtraction {
   const date = extractDate(text);
   const merchant = extractMerchant(lines);
   const category = extractCategory(text, merchant.value);
+  const lineItems = extractReceiptLineItems(lines);
   const fieldConfidence: ReceiptFieldConfidence = {
     amount: amount.confidence,
     date: date.confidence,
@@ -294,5 +362,6 @@ export function parseReceiptText(rawText: string): ReceiptExtraction {
     fieldConfidence,
     overallConfidence,
     warnings,
+    lineItems,
   };
 }

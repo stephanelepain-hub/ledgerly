@@ -64,6 +64,16 @@ export default function TransactionFormScreen() {
   const extractionSource = (first(params.extractionSource) ??
     existing?.extractionSource ??
     "manual") as ExtractionSource;
+  const lineItems = useMemo(() => existing?.lineItems ?? [], [existing?.lineItems]);
+  const priceHistory = useMemo(() => new Map(lineItems.map((item) => {
+    const normalized = item.name.trim().toLocaleLowerCase();
+    const previous = transactions
+      .filter((transaction) => transaction.id !== existing?.id)
+      .flatMap((transaction) => transaction.lineItems.map((candidate) => ({ ...candidate, date: transaction.date, merchant: transaction.merchant })))
+      .filter((candidate) => candidate.name.trim().toLocaleLowerCase() === normalized && candidate.lineTotalMinor)
+      .sort((a, b) => b.date.localeCompare(a.date))[0];
+    return [item.id, previous] as const;
+  })), [lineItems, transactions, existing?.id]);
 
   useEffect(() => {
     if (existing) {
@@ -128,6 +138,7 @@ export default function TransactionFormScreen() {
         receiptUri,
         ocrText,
         extractionSource,
+        lineItems,
       });
       if (Platform.OS !== "web") {
         await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
@@ -251,6 +262,20 @@ export default function TransactionFormScreen() {
                     : "Processed on this device — review before saving"}
                 </Text>
               </View>
+            </View>
+          )}
+
+          {!!lineItems.length && (
+            <View style={[styles.cartCard, { backgroundColor: colors.surface, borderColor: colors.border }]}>
+              <View style={styles.cartHeading}><Text style={[styles.cartTitle, { color: colors.text }]}>Shopping cart</Text><Text style={[styles.cartCount, { color: colors.primary }]}>{lineItems.length} items</Text></View>
+              <Text style={[styles.cartBody, { color: colors.muted }]}>Saved locally from the receipt. Prices below are editable during receipt review.</Text>
+              {lineItems.map((item) => {
+                const previous = priceHistory.get(item.id);
+                return <View key={item.id} style={[styles.cartRow, { borderTopColor: colors.border }]}>
+                  <View style={styles.cartItemCopy}><Text style={[styles.cartItemName, { color: colors.text }]}>{item.name}</Text>{previous && <Text style={[styles.cartHistory, { color: colors.muted }]}>Previously {formatMoney(previous.lineTotalMinor!)} · {previous.merchant || previous.date}</Text>}</View>
+                  <Text style={[styles.cartItemPrice, { color: colors.text }]}>{item.lineTotalMinor ? formatMoney(item.lineTotalMinor) : "—"}</Text>
+                </View>;
+              })}
             </View>
           )}
 
@@ -455,6 +480,16 @@ const styles = StyleSheet.create({
   receiptTitleRow: { flexDirection: "row", alignItems: "center", gap: 6 },
   receiptTitle: { fontSize: 14, lineHeight: 19, fontWeight: "800" },
   receiptBody: { fontSize: 12, lineHeight: 17 },
+  cartCard: { borderRadius: 16, borderWidth: 1, padding: 12, gap: 7 },
+  cartHeading: { flexDirection: "row", alignItems: "center", justifyContent: "space-between" },
+  cartTitle: { fontSize: 15, lineHeight: 20, fontWeight: "800" },
+  cartCount: { fontSize: 12, lineHeight: 17, fontWeight: "800" },
+  cartBody: { fontSize: 11, lineHeight: 16 },
+  cartRow: { minHeight: 42, borderTopWidth: StyleSheet.hairlineWidth, paddingTop: 7, flexDirection: "row", alignItems: "center", gap: 10 },
+  cartItemCopy: { flex: 1, minWidth: 0 },
+  cartItemName: { fontSize: 13, lineHeight: 18, fontWeight: "700" },
+  cartHistory: { marginTop: 1, fontSize: 10, lineHeight: 14 },
+  cartItemPrice: { fontSize: 13, lineHeight: 18, fontWeight: "800", fontVariant: ["tabular-nums"] },
   typeControl: { height: 46, borderRadius: 14, borderWidth: 1, padding: 3, flexDirection: "row" },
   typeOption: { flex: 1, borderRadius: 11, alignItems: "center", justifyContent: "center" },
   typeText: { fontSize: 14, lineHeight: 19, fontWeight: "800" },
