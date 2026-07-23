@@ -10,11 +10,12 @@ import { ScreenContainer } from "@/components/screen-container";
 import { useColors } from "@/hooks/use-colors";
 import { createReceiptDraft, updateReceiptDraft } from "@/lib/receipt-draft-store";
 import { mergeReceiptSections, parseReceiptText } from "@/lib/receipt-parser";
-import { recognizeReceiptText } from "@/lib/receipt-ocr";
+import { recognizeReceiptText, type ReceiptOcrLine } from "@/lib/receipt-ocr";
 
 interface ReceiptSection {
   uri: string;
   text: string;
+  lines: ReceiptOcrLine[];
 }
 
 export default function ScanScreen() {
@@ -51,7 +52,7 @@ export default function ScanScreen() {
     setStatus("Reading this section on your device…");
     try {
       const result = await recognizeReceiptText(uri);
-      setSections((current) => [...current, { uri, text: result.text }]);
+      setSections((current) => [...current, { uri, text: result.text, lines: result.lines }]);
       setStatus("Section read. Add the next section with overlap, or review the receipt.");
     } catch (error) {
       setStatus("Could not read this section");
@@ -92,7 +93,9 @@ export default function ScanScreen() {
     if (!sections.length) return;
     const draft = createReceiptDraft(sections.map((section) => section.uri));
     const ocrText = mergeReceiptSections(sections.map((section) => section.text));
-    const extraction = parseReceiptText(ocrText);
+    // ML Kit's plain text can flatten left/right receipt columns into an
+    // incorrect reading order. Keep its visual rows for product matching.
+    const extraction = parseReceiptText(ocrText, sections.flatMap((section) => section.lines));
     updateReceiptDraft(draft.id, {
       status: "ready",
       ocrText,

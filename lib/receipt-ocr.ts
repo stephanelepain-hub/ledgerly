@@ -7,9 +7,23 @@ export class ReceiptOcrUnavailableError extends Error {
   }
 }
 
+export interface ReceiptOcrElement {
+  text: string;
+  left: number;
+}
+
+/** A visual OCR row, retained so receipt columns are not flattened into text order. */
+export interface ReceiptOcrLine {
+  text: string;
+  top: number;
+  left: number;
+  elements: ReceiptOcrElement[];
+}
+
 export interface ReceiptOcrResult {
   text: string;
   blockCount: number;
+  lines: ReceiptOcrLine[];
 }
 
 export function canAttemptOnDeviceOcr(): boolean {
@@ -34,7 +48,13 @@ export async function recognizeReceiptText(imageUri: string): Promise<ReceiptOcr
         "No readable text was detected. Try brighter, even lighting and keep the whole receipt in frame.",
       );
     }
-    return { text, blockCount: result.blocks?.length ?? 0 };
+    const lines = result.blocks.flatMap((block) => block.lines.map((line) => ({
+      text: line.text,
+      top: line.frame.top,
+      left: line.frame.left,
+      elements: line.elements.map((element) => ({ text: element.text, left: element.frame.left })),
+    }))).sort((a, b) => a.top - b.top || a.left - b.left);
+    return { text, blockCount: result.blocks.length, lines };
   } catch (error) {
     if (error instanceof ReceiptOcrUnavailableError) throw error;
     const message = error instanceof Error ? error.message : String(error);
