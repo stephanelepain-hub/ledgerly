@@ -16,6 +16,8 @@ export interface ReceiptExtraction {
   fieldConfidence: ReceiptFieldConfidence;
   overallConfidence: number;
   warnings: string[];
+  /** TVA/VAT included in the total, when it can be identified locally. */
+  taxMinor?: number | null;
   lineItems: ReceiptLineItem[];
 }
 
@@ -208,6 +210,25 @@ function amountLabelConfidence(line: string): number {
   return 0.46;
 }
 
+function extractTax(lines: string[]): number | null {
+  const amountPattern = /(?:[$€£]\s*)?(\d{1,3}(?:[ ,]\d{3})*(?:[.,]\d{2})|\d+[.,]\d{2})\b/g;
+  const isTaxLabel = /\b(?:tva|vat|taxe?s?)\b/i;
+
+  for (let index = 0; index < lines.length; index += 1) {
+    if (!isTaxLabel.test(lines[index])) continue;
+    const values = [...lines[index].matchAll(amountPattern)]
+      .map((match) => normalizeAmount(match[0]))
+      .filter((value): value is number => value !== null);
+    if (values.length) return values.at(-1) ?? null;
+
+    const next = lines[index + 1] ?? "";
+    if (!ITEM_NOISE.test(next) && /^\s*(?:[€$£]\s*)?\d+(?:[.,]\d{2})\s*$/u.test(next)) {
+      return normalizeAmount(next);
+    }
+  }
+  return null;
+}
+
 function extractAmount(lines: string[]): { value: number | null; confidence: number } {
   const candidates: AmountCandidate[] = [];
   const pattern = /(?:[$€£]\s*)?(\d{1,3}(?:[ ,]\d{3})*(?:[.,]\d{2})|\d+[.,]\d{2})\b/g;
@@ -353,6 +374,7 @@ export function parseReceiptText(rawText: string): ReceiptExtraction {
   const date = extractDate(text);
   const merchant = extractMerchant(lines);
   const category = extractCategory(text, merchant.value);
+  const taxMinor = extractTax(lines);
   const lineItems = extractReceiptLineItems(lines);
   const fieldConfidence: ReceiptFieldConfidence = {
     amount: amount.confidence,
@@ -385,6 +407,7 @@ export function parseReceiptText(rawText: string): ReceiptExtraction {
     fieldConfidence,
     overallConfidence,
     warnings,
+    taxMinor,
     lineItems,
   };
 }

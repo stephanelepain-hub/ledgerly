@@ -64,6 +64,7 @@ describe("receipt parser", () => {
   it("does not add French pre-tax, VAT, or tax-inclusive totals to the cart", () => {
     const result = parseReceiptText(`MARCHE LOCAL\nOEUFS FERMIERS\n3,25\nTOTAL HT\n14,05\nTVA 5,5%\n0,77\nTOTAL TTC\n14,82`);
 
+    expect(result.taxMinor).toBe(77);
     expect(result.lineItems.map((item) => [item.name, item.lineTotalMinor])).toEqual([
       ["OEUFS FERMIERS", 325],
     ]);
