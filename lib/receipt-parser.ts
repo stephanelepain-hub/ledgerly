@@ -368,17 +368,20 @@ function extractDate(text: string): { value: string; confidence: number } {
     if (value) return { value, confidence: 0.94 };
   }
 
-  const numeric = text.match(/\b(0?[1-9]|[12]\d|3[01])[\-/.](0?[1-9]|1[0-2])[\-/.](20\d{2}|\d{2})\b/);
+  const numeric = text.match(/\b(0?[1-9]|[12]\d|3[01])[\-/.](0?[1-9]|[12]\d|3[01])[\-/.](20\d{2}|\d{2})\b/);
   if (numeric) {
     const first = Number(numeric[1]);
     const second = Number(numeric[2]);
     const rawYear = Number(numeric[3]);
     const year = rawYear < 100 ? 2000 + rawYear : rawYear;
-    const unambiguousDayFirst = first > 12;
-    const month = unambiguousDayFirst ? second : first;
-    const day = unambiguousDayFirst ? first : second;
+    // European receipts print day-first. Treat ambiguous dates as DD/MM and
+    // fall back to MM/DD only when the second value cannot be a month.
+    const monthFirstOnly = second > 12 && first <= 12;
+    const day = monthFirstOnly ? second : first;
+    const month = monthFirstOnly ? first : second;
+    const unambiguous = first > 12 || second > 12;
     const value = isoDate(year, month, day);
-    if (value) return { value, confidence: unambiguousDayFirst ? 0.88 : 0.68 };
+    if (value) return { value, confidence: unambiguous ? 0.88 : 0.68 };
   }
 
   const monthNames =
