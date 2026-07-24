@@ -2,7 +2,7 @@ import MaterialIcons from "@expo/vector-icons/MaterialIcons";
 import * as Haptics from "expo-haptics";
 import { Image } from "expo-image";
 import { router, useLocalSearchParams } from "expo-router";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   Alert,
   KeyboardAvoidingView,
@@ -75,8 +75,14 @@ export default function TransactionFormScreen() {
     return [item.id, previous] as const;
   })), [lineItems, transactions, existing?.id]);
 
+  // Populate once per transaction id. The context recreates transaction
+  // objects on every refresh, so depending on object identity could wipe
+  // in-progress user edits.
+  const populatedTransactionId = useRef<string | null>(null);
   useEffect(() => {
     if (existing) {
+      if (populatedTransactionId.current === existing.id) return;
+      populatedTransactionId.current = existing.id;
       setType(existing.type);
       setAmount((existing.amountMinor / 100).toFixed(2));
       setDate(existing.date);

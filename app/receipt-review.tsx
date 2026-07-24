@@ -25,6 +25,7 @@ import {
   removeReceiptDraft,
   updateReceiptDraft,
 } from "@/lib/receipt-draft-store";
+import { persistReceiptImage } from "@/lib/receipt-storage";
 import {
   HIGH_CONFIDENCE_THRESHOLD,
   type ReceiptExtraction,
@@ -188,6 +189,11 @@ export default function ReceiptReviewScreen() {
 
     setIsSaving(true);
     try {
+      // Copy the receipt image out of the volatile camera/picker cache before
+      // referencing it from the ledger. If the copy fails, fall back to the
+      // cache URI so the save itself never blocks.
+      const receiptUri = await persistReceiptImage(draft.imageUri, createId("receipt-img"))
+        .catch(() => draft.imageUri);
       await upsertTransaction({
         type: "expense",
         amountMinor,
@@ -196,7 +202,7 @@ export default function ReceiptReviewScreen() {
         merchant: merchant.trim(),
         description: description.trim() || `Receipt from ${merchant.trim()}`,
         notes: "",
-        receiptUri: draft.imageUri,
+        receiptUri,
         ocrText: draft.ocrText || null,
         extractionSource: source,
         lineItems: lineItems
@@ -360,7 +366,7 @@ export default function ReceiptReviewScreen() {
           )}
 
           <View style={styles.formSection}>
-            <FieldLabel label={taxMinor !== null ? "Total TTC" : "Amount"} confidence={extraction?.fieldConfidence.amount} />
+            <FieldLabel label={taxMinor !== null ? "Total TTC" : "Amount"} />
             <View style={[styles.amountInputWrap, { backgroundColor: colors.surface, borderColor: !amountMinor && amount ? colors.error : colors.border }]}>
               <Text style={[styles.currency, { color: colors.muted }]}>€</Text>
               <TextInput value={amount} onChangeText={setAmount} keyboardType="decimal-pad" placeholder="0.00" placeholderTextColor={colors.muted} style={[styles.amountInput, { color: colors.text }]} returnKeyType="done" />
@@ -368,13 +374,13 @@ export default function ReceiptReviewScreen() {
 
             <ReceiptDatePicker value={date} onChange={setDate} confidence={extraction?.fieldConfidence.date} />
 
-            <FieldLabel label="Merchant" confidence={extraction?.fieldConfidence.merchant} />
+            <FieldLabel label="Merchant" />
             <TextInput value={merchant} onChangeText={setMerchant} placeholder="Merchant or payee" placeholderTextColor={colors.muted} style={[styles.textInput, { color: colors.text, backgroundColor: colors.surface, borderColor: colors.border }]} returnKeyType="next" />
 
             <FieldLabel label="Description" />
             <TextInput value={description} onChangeText={setDescription} placeholder="What was this for?" placeholderTextColor={colors.muted} style={[styles.textInput, { color: colors.text, backgroundColor: colors.surface, borderColor: colors.border }]} returnKeyType="done" />
 
-            <FieldLabel label="Category" confidence={extraction?.fieldConfidence.category} />
+            <FieldLabel label="Category" />
             <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.categoryRow}>
               {categories.map((category) => {
                 const selected = category.id === categoryId;
@@ -405,7 +411,7 @@ export default function ReceiptReviewScreen() {
   );
 }
 
-function FieldLabel({ label }: { label: string; confidence?: number }) {
+function FieldLabel({ label }: { label: string }) {
   const colors = useColors();
   return (
     <View style={styles.labelRow}>
