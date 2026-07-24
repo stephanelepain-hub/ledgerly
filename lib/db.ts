@@ -2,7 +2,8 @@ import type { SQLiteDatabase } from "expo-sqlite";
 
 import {
   createId,
-  getPeriodStart,
+  getPeriodRange,
+  isDateInPeriodRange,
   type Category,
   type DashboardSummary,
   type SummaryPeriod,
@@ -316,10 +317,8 @@ export function calculateSummary(
   period: SummaryPeriod,
   now = new Date(),
 ): DashboardSummary {
-  const periodStart = getPeriodStart(period, now);
-  const included = periodStart
-    ? transactions.filter((transaction) => transaction.date >= periodStart)
-    : transactions;
+  const range = getPeriodRange(period, now);
+  const included = transactions.filter((transaction) => isDateInPeriodRange(transaction.date, range));
 
   const incomeMinor = included
     .filter((transaction) => transaction.type === "income")

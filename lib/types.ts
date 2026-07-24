@@ -123,16 +123,30 @@ export function formatShortDate(isoDate: string): string {
   }).format(parsed);
 }
 
-export function getPeriodStart(period: SummaryPeriod, now = new Date()): string | null {
-  if (period === "all") return null;
+export interface PeriodRange {
+  start: string | null;
+  /** First date after the period; compare with `<`. */
+  endExclusive: string | null;
+}
+
+function firstOfMonthIso(date: Date): string {
+  return [date.getFullYear(), String(date.getMonth() + 1).padStart(2, "0"), "01"].join("-");
+}
+
+/**
+ * Bounds a summary/export period at both ends so future-dated records do not
+ * leak into "this month" or "this year".
+ */
+export function getPeriodRange(period: SummaryPeriod, now = new Date()): PeriodRange {
+  if (period === "all") return { start: null, endExclusive: null };
   const year = now.getFullYear();
   const month = period === "month" ? now.getMonth() : 0;
-  const local = new Date(year, month, 1);
-  return [
-    local.getFullYear(),
-    String(local.getMonth() + 1).padStart(2, "0"),
-    "01",
-  ].join("-");
+  const end = period === "month" ? new Date(year, month + 1, 1) : new Date(year + 1, 0, 1);
+  return { start: firstOfMonthIso(new Date(year, month, 1)), endExclusive: firstOfMonthIso(end) };
+}
+
+export function isDateInPeriodRange(date: string, range: PeriodRange): boolean {
+  return (range.start === null || date >= range.start) && (range.endExclusive === null || date < range.endExclusive);
 }
 
 export function parseAmountToMinor(value: string): number | null {
