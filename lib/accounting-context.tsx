@@ -17,6 +17,7 @@ import {
   listTransactions,
   saveTransaction,
 } from "@/lib/db";
+import { deleteReceiptImage } from "@/lib/receipt-storage";
 import type {
   Category,
   DashboardSummary,
@@ -87,10 +88,14 @@ export function AccountingProvider({ children }: { children: ReactNode }) {
 
   const deleteTransaction = useCallback(
     async (id: string) => {
+      const target = transactions.find((transaction) => transaction.id === id);
       await removeTransaction(db, id);
+      // Best-effort cleanup of the app-owned receipt image copy; ledger
+      // deletion never fails because of the file system.
+      await deleteReceiptImage(target?.receiptUri).catch(() => undefined);
       await refresh();
     },
-    [db, refresh],
+    [db, refresh, transactions],
   );
 
   const getSummary = useCallback(
