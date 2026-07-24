@@ -52,6 +52,17 @@ export default function ReceiptReviewScreen() {
   );
   const [isSaving, setIsSaving] = useState(false);
   const [lineItems, setLineItems] = useState<ReceiptLineItem[]>(initial?.lineItems ?? []);
+  // Cart prices are edited as raw text and parsed on blur/save. Parsing and
+  // re-formatting on every keystroke corrupted typed amounts (e.g. "450"
+  // became 4005.00 and grew a hundredfold per digit).
+  const [priceDrafts, setPriceDrafts] = useState<Record<string, string>>(() =>
+    Object.fromEntries(
+      (initial?.lineItems ?? []).map((item) => [
+        item.id,
+        item.lineTotalMinor ? (item.lineTotalMinor / 100).toFixed(2) : "",
+      ]),
+    ),
+  );
   const [preTaxMinor, setPreTaxMinor] = useState(initial?.preTaxMinor ?? null);
   const [taxMinor, setTaxMinor] = useState(initial?.taxMinor ?? null);
 
@@ -75,6 +86,14 @@ export default function ReceiptReviewScreen() {
     setPreTaxMinor(next.preTaxMinor ?? null);
     setTaxMinor(next.taxMinor ?? null);
     setLineItems(next.lineItems);
+    setPriceDrafts(Object.fromEntries(next.lineItems.map((item) => [
+      item.id,
+      item.lineTotalMinor ? (item.lineTotalMinor / 100).toFixed(2) : "",
+    ])));
+  };
+
+  const commitPriceDraft = (id: string) => {
+    updateLineItem(id, { lineTotalMinor: parseAmountToMinor(priceDrafts[id] ?? "") });
   };
 
   const updateLineItem = (id: string, update: Partial<ReceiptLineItem>) => {
@@ -82,9 +101,11 @@ export default function ReceiptReviewScreen() {
   };
 
   const addLineItem = () => {
+    const id = createId("item");
     setLineItems((items) => [...items, {
-      id: createId("item"), name: "", quantity: null, unitPriceMinor: null, lineTotalMinor: null, confidence: 0,
+      id, name: "", quantity: null, unitPriceMinor: null, lineTotalMinor: null, confidence: 0,
     }]);
+    setPriceDrafts((drafts) => ({ ...drafts, [id]: "" }));
   };
 
   const retryWithCloud = () => {
@@ -179,7 +200,13 @@ export default function ReceiptReviewScreen() {
         ocrText: draft.ocrText || null,
         extractionSource: source,
         lineItems: lineItems
-          .map((item) => ({ ...item, name: item.name.trim() }))
+          .map((item) => ({
+            ...item,
+            name: item.name.trim(),
+            lineTotalMinor: item.id in priceDrafts
+              ? parseAmountToMinor(priceDrafts[item.id])
+              : item.lineTotalMinor,
+          }))
           .filter((item) => item.name.length > 0),
       });
       removeReceiptDraft(draft.id);
@@ -304,7 +331,7 @@ export default function ReceiptReviewScreen() {
             {lineItems.map((item) => (
               <View key={item.id} style={[styles.cartRow, { borderTopColor: colors.border }]}>
                 <TextInput value={item.name} onChangeText={(name) => updateLineItem(item.id, { name })} placeholder="Item name" placeholderTextColor={colors.muted} style={[styles.cartName, { color: colors.text }]} />
-                <TextInput value={item.lineTotalMinor ? (item.lineTotalMinor / 100).toFixed(2) : ""} onChangeText={(value) => updateLineItem(item.id, { lineTotalMinor: parseAmountToMinor(value) })} keyboardType="decimal-pad" placeholder="Price" placeholderTextColor={colors.muted} style={[styles.cartPrice, { color: colors.text, borderColor: colors.border }]} />
+                <TextInput value={priceDrafts[item.id] ?? (item.lineTotalMinor ? (item.lineTotalMinor / 100).toFixed(2) : "")} onChangeText={(value) => setPriceDrafts((drafts) => ({ ...drafts, [item.id]: value }))} onBlur={() => commitPriceDraft(item.id)} keyboardType="decimal-pad" placeholder="Price" placeholderTextColor={colors.muted} style={[styles.cartPrice, { color: colors.text, borderColor: colors.border }]} />
                 <Pressable onPress={() => setLineItems((items) => items.filter((candidate) => candidate.id !== item.id))} hitSlop={9} accessibilityLabel={`Remove ${item.name || "item"}`}>
                   <MaterialIcons name="close" size={19} color={colors.muted} />
                 </Pressable>
