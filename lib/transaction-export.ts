@@ -5,6 +5,8 @@ import * as Sharing from "expo-sharing";
 import {
   formatLongDate,
   formatMoney,
+  getPeriodRange,
+  isDateInPeriodRange,
   isoDateFromDate,
   type Transaction,
 } from "@/lib/types";
@@ -16,15 +18,8 @@ export function filterTransactionsForExport(
   period: ExportPeriod,
   now = new Date(),
 ): Transaction[] {
-  if (period === "all") return transactions;
-
-  const year = now.getFullYear();
-  const month = now.getMonth();
-  const start = period === "month"
-    ? `${year}-${String(month + 1).padStart(2, "0")}-01`
-    : `${year}-01-01`;
-
-  return transactions.filter((transaction) => transaction.date >= start);
+  const range = getPeriodRange(period, now);
+  return transactions.filter((transaction) => isDateInPeriodRange(transaction.date, range));
 }
 
 export function exportPeriodLabel(period: ExportPeriod, now = new Date()): string {

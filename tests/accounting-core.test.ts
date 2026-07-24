@@ -6,7 +6,12 @@ import {
   mergeReceiptSections,
   parseReceiptText,
 } from "../lib/receipt-parser";
-import { parseAmountToMinor, type Transaction } from "../lib/types";
+import {
+  getPeriodRange,
+  isDateInPeriodRange,
+  parseAmountToMinor,
+  type Transaction,
+} from "../lib/types";
 
 function transaction(overrides: Partial<Transaction>): Transaction {
   return {
@@ -172,6 +177,17 @@ describe("receipt parser", () => {
     ])).toBe("Market\nApples 2.50\nPasta 1.20\nMilk 1.80\nTOTAL 5.50");
   });
 
+  it("parses ambiguous numeric dates day-first for European receipts", () => {
+    const ambiguous = parseReceiptText("ALDI\n05/07/2026\nTOTAL 14,82");
+    expect(ambiguous.date).toBe("2026-07-05");
+
+    const dayFirst = parseReceiptText("ALDI\n25/12/2026\nTOTAL 14,82");
+    expect(dayFirst.date).toBe("2026-12-25");
+
+    const monthFirstOnly = parseReceiptText("US STORE\n12/25/2026\nTOTAL $14.82");
+    expect(monthFirstOnly.date).toBe("2026-12-25");
+  });
+
   it("flags incomplete OCR text instead of inventing a total", () => {
     const result = parseReceiptText("THANK YOU\nCustomer copy\nCard approved");
 
@@ -199,6 +215,45 @@ describe("accounting summaries", () => {
     expect(summary.transactionCount).toBe(3);
     expect(summary.categorySpending[0]).toMatchObject({ categoryId: "groceries", amountMinor: 2_000 });
     expect(summary.categorySpending[0].percentage).toBeCloseTo(2 / 3);
+  });
+
+  it("excludes future-dated records from month and year summaries", () => {
+    const rows = [
+      transaction({ id: "now", amountMinor: 1_000, date: "2026-07-03" }),
+      transaction({ id: "future-month", amountMinor: 2_000, date: "2026-08-01" }),
+      transaction({ id: "future-year", amountMinor: 4_000, date: "2027-01-01" }),
+    ];
+
+    const month = calculateSummary(rows, "month", new Date(2026, 6, 13, 12));
+    expect(month.expenseMinor).toBe(1_000);
+    expect(month.transactionCount).toBe(1);
+
+    const year = calculateSummary(rows, "year", new Date(2026, 6, 13, 12));
+    expect(year.expenseMinor).toBe(3_000);
+    expect(year.transactionCount).toBe(2);
+
+    const all = calculateSummary(rows, "all", new Date(2026, 6, 13, 12));
+    expect(all.expenseMinor).toBe(7_000);
+  });
+
+  it("bounds period ranges at both ends and rolls over December correctly", () => {
+    const july = getPeriodRange("month", new Date(2026, 6, 13, 12));
+    expect(july).toEqual({ start: "2026-07-01", endExclusive: "2026-08-01" });
+    expect(isDateInPeriodRange("2026-07-03", july)).toBe(true);
+    expect(isDateInPeriodRange("2026-08-01", july)).toBe(false);
+    expect(isDateInPeriodRange("2026-06-30", july)).toBe(false);
+
+    const december = getPeriodRange("month", new Date(2026, 11, 15, 12));
+    expect(december).toEqual({ start: "2026-12-01", endExclusive: "2027-01-01" });
+    expect(isDateInPeriodRange("2026-12-31", december)).toBe(true);
+    expect(isDateInPeriodRange("2027-01-01", december)).toBe(false);
+
+    const year = getPeriodRange("year", new Date(2026, 6, 13, 12));
+    expect(year).toEqual({ start: "2026-01-01", endExclusive: "2027-01-01" });
+
+    const all = getPeriodRange("all", new Date(2026, 6, 13, 12));
+    expect(all).toEqual({ start: null, endExclusive: null });
+    expect(isDateInPeriodRange("1999-01-01", all)).toBe(true);
   });
 });
 
