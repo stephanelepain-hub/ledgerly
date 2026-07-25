@@ -138,8 +138,10 @@ export default function ScanScreen() {
 
       if (outcome.status === "unsupported") {
         // Genuinely impossible on this build/device, so stop offering it.
+        // Recoverable by hand below, in case this verdict is ever wrong.
         setDocScannerAvailable(false);
         setStatus("The document scanner is unavailable on this device — use the manual camera.");
+        console.warn("Document scanner unsupported:", outcome.reason);
         return;
       }
       if (outcome.status === "failed") {
@@ -325,6 +327,22 @@ export default function ScanScreen() {
             <MaterialIcons name="add-a-photo" size={22} color="#FFFFFF" /><Text style={styles.primaryText}>{sections.length ? "Add next section" : "Open scanner"}</Text>
           </Pressable>
         )}
+        {!docScannerAvailable && (
+          <Pressable
+            disabled={working}
+            onPress={() => {
+              setDocScannerAvailable(true);
+              setCameraOpen(false);
+              setStatus("Ready to scan a receipt");
+            }}
+            hitSlop={8}
+            accessibilityLabel="Try the document scanner again"
+            style={({ pressed }) => [styles.retryScanner, pressed && styles.pressed]}
+          >
+            <MaterialIcons name="refresh" size={16} color={colors.primary} />
+            <Text style={[styles.retryScannerText, { color: colors.primary }]}>Try the document scanner again</Text>
+          </Pressable>
+        )}
         <Pressable disabled={working} onPress={() => void pickImage()} style={({ pressed }) => [styles.secondary, { borderColor: colors.border, backgroundColor: colors.surface }, (pressed || working) && styles.pressed]}>
           <MaterialIcons name="photo-library" size={21} color={colors.primary} /><Text style={[styles.secondaryText, { color: colors.text }]}>{sections.length ? "Add section from gallery" : "Choose from gallery"}</Text>
         </Pressable>
@@ -379,6 +397,7 @@ const styles = StyleSheet.create({
   primary: { minHeight: 54, borderRadius: 16, alignItems: "center", justifyContent: "center", flexDirection: "row", gap: 9 }, primaryText: { color: "#FFFFFF", fontSize: 16, lineHeight: 21, fontWeight: "800" },
   secondary: { minHeight: 52, borderWidth: 1, borderRadius: 16, alignItems: "center", justifyContent: "center", flexDirection: "row", gap: 8 }, secondaryText: { fontSize: 15, lineHeight: 20, fontWeight: "700" },
   sectionList: { borderWidth: 1, borderRadius: 14, padding: 10, flexDirection: "row", flexWrap: "wrap", gap: 10 }, sectionThumbWrap: { width: 56 }, sectionThumb: { width: 56, height: 74, borderWidth: 1, borderRadius: 9 }, sectionThumbLabel: { marginTop: 2, fontSize: 10, lineHeight: 14, fontWeight: "800", textAlign: "center" }, sectionRemove: { position: "absolute", top: -7, right: -7, width: 24, height: 24, borderRadius: 12, borderWidth: 1, alignItems: "center", justifyContent: "center" },
+  retryScanner: { minHeight: 34, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 6 }, retryScannerText: { fontSize: 12, lineHeight: 17, fontWeight: "800" },
   receiptActions: { alignItems: "center", gap: 8 }, reviewButton: { width: "100%", minHeight: 52, borderWidth: 1, borderRadius: 16, alignItems: "center", justifyContent: "center", flexDirection: "row", gap: 8 }, reviewText: { fontSize: 15, lineHeight: 20, fontWeight: "800" }, restartButton: { minHeight: 32, justifyContent: "center", paddingHorizontal: 14 }, restartText: { fontSize: 13, lineHeight: 18, fontWeight: "700" },
   tip: { borderTopWidth: StyleSheet.hairlineWidth, marginTop: 4, paddingTop: 15, flexDirection: "row", gap: 9 }, tipText: { flex: 1, fontSize: 12, lineHeight: 17 }, pressed: { opacity: 0.7 },
 });
