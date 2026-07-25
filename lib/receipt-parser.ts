@@ -104,30 +104,82 @@ function normalizedLine(value: string): string {
   return value.trim().replace(/\s+/g, " ").toLocaleLowerCase();
 }
 
+function similarityKey(value: string): string {
+  return normalizedLine(value)
+    .normalize("NFD")
+    .replace(/\p{M}/gu, "")
+    .replace(/[^\p{L}\p{N}]+/gu, " ")
+    .trim();
+}
+
+function levenshteinDistance(a: string, b: string): number {
+  if (a === b) return 0;
+  if (!a.length) return b.length;
+  if (!b.length) return a.length;
+  let previous = Array.from({ length: b.length + 1 }, (_, index) => index);
+  for (let i = 1; i <= a.length; i += 1) {
+    const current = [i];
+    for (let j = 1; j <= b.length; j += 1) {
+      current[j] = Math.min(
+        previous[j] + 1,
+        current[j - 1] + 1,
+        previous[j - 1] + (a[i - 1] === b[j - 1] ? 0 : 1),
+      );
+    }
+    previous = current;
+  }
+  return previous[b.length];
+}
+
 /**
- * Joins close-up OCR passes of a long receipt without duplicating the lines
- * deliberately overlapped between adjacent photos. It never uploads images
- * or text; callers keep the source images in the in-memory receipt draft.
+ * OCR reads the same printed line slightly differently on every pass
+ * ("OEUFS" vs "0EUFS"). Duplicate detection must therefore be fuzzy, not
+ * exact, or re-captured receipt regions produce duplicated cart items.
  */
-export function mergeReceiptSections(sections: string[]): string {
+export function receiptLineSimilarity(a: string, b: string): number {
+  const left = similarityKey(a);
+  const right = similarityKey(b);
+  if (!left && !right) return 1;
+  if (!left || !right) return 0;
+  if (left === right) return 1;
+  const distance = levenshteinDistance(left, right);
+  return 1 - distance / Math.max(left.length, right.length);
+}
+
+const SECTION_OVERLAP_SIMILARITY = 0.8;
+
+function isSameReceiptLine(a: string, b: string): boolean {
+  return receiptLineSimilarity(a, b) >= SECTION_OVERLAP_SIMILARITY;
+}
+
+function mergeSectionLineArrays(sections: string[][]): string[] {
   const merged: string[] = [];
   for (const section of sections) {
-    const incoming = section.split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
+    const incoming = section.map((line) => line.trim()).filter(Boolean);
     if (!incoming.length) continue;
 
     const maximumOverlap = Math.min(12, merged.length, incoming.length);
     let overlap = 0;
     for (let size = maximumOverlap; size > 0; size -= 1) {
-      const prior = merged.slice(-size).map(normalizedLine);
-      const next = incoming.slice(0, size).map(normalizedLine);
-      if (prior.every((line, index) => line === next[index])) {
+      const prior = merged.slice(-size);
+      const next = incoming.slice(0, size);
+      if (prior.every((line, index) => isSameReceiptLine(line, next[index]))) {
         overlap = size;
         break;
       }
     }
     merged.push(...incoming.slice(overlap));
   }
-  return merged.join("\n");
+  return merged;
+}
+
+/**
+ * Joins close-up OCR passes of a long receipt without duplicating the lines
+ * deliberately overlapped between adjacent photos. It never uploads images
+ * or text; callers keep the source images in the in-memory receipt draft.
+ */
+export function mergeReceiptSections(sections: string[]): string {
+  return mergeSectionLineArrays(sections.map((section) => section.split(/\r?\n/))).join("\n");
 }
 
 const ITEM_NOISE = /\b(sub\s*total|grand\s*total|total|tax|tva|vat|t\.?(?:t\.?)?c\.?|tic|h\.?[ti1]\.?|hors\s*taxe?|toutes?\s+taxes?\s+comprises?|a\s*payer|net\s+a\s+payer|montant\s+du|nombre\s+de\s+lignes?|change|cash|card|c[b8]|visa|mastercard|payment|amount\s*due|balance\s*due|discount|coupon|loyalty|thank\s*you)\b/i;
@@ -141,12 +193,12 @@ function isItemNoise(value: string): boolean {
  * authoritative: items are suggestions for the user to edit, not a second
  * calculation of the transaction amount.
  */
-export function extractReceiptLineItems(lines: string[], visualRows?: ReceiptOcrLine[]): ReceiptLineItem[] {
+export function extractReceiptLineItems(lines: string[], visualRowLines?: string[]): ReceiptLineItem[] {
   const items: ReceiptLineItem[] = [];
   const seen = new Set<string>();
   // ML Kit's result.text may flatten columns (all descriptions followed by all
-  // prices). Rebuild each printed row from its positioned line fragments.
-  const sourceLines = visualRows?.length ? rebuildReceiptVisualRows(visualRows) : lines;
+  // prices). Callers pass printed rows rebuilt from positioned line fragments.
+  const sourceLines = visualRowLines?.length ? visualRowLines : lines;
   const cleanedLines = sourceLines.map((rawLine) => rawLine.replace(/\s+/g, " ").trim());
   const amountToken = "(?:[€$£]\\s*)?(\\d{1,3}(?:[ ,]\\d{3})*[.,]\\d{2}|\\d+[.,]\\d{2})";
   const priceSuffix = "(?:\\s*(?:EUR|EURO|[€$£]|e))?(?:\\s+(?:[A-Z]|\\d+))?";
@@ -165,6 +217,15 @@ export function extractReceiptLineItems(lines: string[], visualRows?: ReceiptOcr
     if (!lineTotalMinor || lineTotalMinor > 1_000_000 || isItemNoise(name) || !/[\p{L}]/u.test(name) || name.length > 100) return;
     const key = `${normalizedLine(name)}|${lineTotalMinor}`;
     if (seen.has(key)) return;
+    // Same price plus a nearly identical name is the signature of the same
+    // printed row read twice (overlapping sections or a re-scanned region).
+    const ITEM_DUPLICATE_SIMILARITY = 0.8;
+    if (items.some((existing) =>
+      existing.lineTotalMinor === lineTotalMinor &&
+      receiptLineSimilarity(existing.name, name) >= ITEM_DUPLICATE_SIMILARITY,
+    )) {
+      return;
+    }
     seen.add(key);
     items.push({ id: createId("item"), name, quantity, unitPriceMinor, lineTotalMinor, confidence });
   };
@@ -486,14 +547,25 @@ function extractCategory(text: string, merchant: string): { value: string; confi
   return { value: bestId, confidence: clamp(0.64 + Math.min(bestScore, 4) * 0.07) };
 }
 
-export function parseReceiptText(rawText: string, visualRows?: ReceiptOcrLine[]): ReceiptExtraction {
+export function parseReceiptText(
+  rawText: string,
+  visualRows?: ReceiptOcrLine[] | ReceiptOcrLine[][],
+): ReceiptExtraction {
   const text = rawText.replace(/\r/g, "\n").replace(/[ \t]+/g, " ").trim();
   const lines = text
     .split("\n")
     .map((line) => line.trim())
     .filter(Boolean);
 
-  const visualLines = visualRows?.length ? rebuildReceiptVisualRows(visualRows) : [];
+  // Rebuild printed rows per captured section, then merge the sections while
+  // dropping the deliberately overlapped region between adjacent photos.
+  // Flattening all sections' rows together duplicated every overlapped item.
+  const visualSections: ReceiptOcrLine[][] = !visualRows?.length
+    ? []
+    : Array.isArray(visualRows[0])
+      ? (visualRows as ReceiptOcrLine[][]).filter((section) => section.length)
+      : [visualRows as ReceiptOcrLine[]];
+  const visualLines = mergeSectionLineArrays(visualSections.map(rebuildReceiptVisualRows));
   const analysisLines = [...lines, ...visualLines];
   const amount = extractAmount(analysisLines);
   const date = extractDate(text);
@@ -503,7 +575,7 @@ export function parseReceiptText(rawText: string, visualRows?: ReceiptOcrLine[])
   const category = extractCategory(text, merchant.value);
   const preTaxMinor = extractPreTax(analysisLines);
   const taxMinor = extractTax(analysisLines);
-  const lineItems = extractReceiptLineItems(lines, visualRows);
+  const lineItems = extractReceiptLineItems(lines, visualLines);
   const fieldConfidence: ReceiptFieldConfidence = {
     amount: amount.confidence,
     date: date.confidence,

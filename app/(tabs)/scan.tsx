@@ -2,14 +2,14 @@ import MaterialIcons from "@expo/vector-icons/MaterialIcons";
 import { CameraView, useCameraPermissions } from "expo-camera";
 import { Image } from "expo-image";
 import * as ImagePicker from "expo-image-picker";
-import { router } from "expo-router";
+import { router, useFocusEffect } from "expo-router";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { ActivityIndicator, Alert, Linking, Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
 
 import { ScreenContainer } from "@/components/screen-container";
 import { useColors } from "@/hooks/use-colors";
 import { saveLatestReceiptOcrDiagnostic } from "@/lib/receipt-debug";
-import { createReceiptDraft, updateReceiptDraft } from "@/lib/receipt-draft-store";
+import { createReceiptDraft, getReceiptDraft, removeReceiptDraft, updateReceiptDraft } from "@/lib/receipt-draft-store";
 import { mergeReceiptSections, parseReceiptText } from "@/lib/receipt-parser";
 import { recognizeReceiptText, type ReceiptOcrLine } from "@/lib/receipt-ocr";
 
@@ -23,6 +23,7 @@ export default function ScanScreen() {
   const colors = useColors();
   const cameraRef = useRef<CameraView>(null);
   const openedOnce = useRef(false);
+  const activeDraftId = useRef<string | null>(null);
   const [permission, requestPermission] = useCameraPermissions();
   const [cameraOpen, setCameraOpen] = useState(false);
   const [cameraReady, setCameraReady] = useState(false);
@@ -48,6 +49,21 @@ export default function ScanScreen() {
     openedOnce.current = true;
     void openCamera();
   }, [openCamera]);
+
+  // When the reviewed draft was consumed (saved), clear the captured sections.
+  // The Scan tab stays mounted, so stale sections would otherwise leak into
+  // the next capture and duplicate cart items. Backing out of review keeps
+  // the draft alive, so in-progress sections survive for editing.
+  useFocusEffect(
+    useCallback(() => {
+      if (activeDraftId.current && !getReceiptDraft(activeDraftId.current)) {
+        activeDraftId.current = null;
+        setSections([]);
+        setPreviewUri(null);
+        setStatus("Position the top of the receipt inside the frame");
+      }
+    }, []),
+  );
 
   const processSection = async (uri: string) => {
     setPreviewUri(uri);
@@ -96,13 +112,29 @@ export default function ScanScreen() {
     }
   };
 
+  const removeSection = (index: number) => {
+    setSections((current) => {
+      const next = current.filter((_, sectionIndex) => sectionIndex !== index);
+      setPreviewUri(next.at(-1)?.uri ?? null);
+      setStatus(next.length
+        ? "Section removed. Add the next section or review the receipt."
+        : "Position the top of the receipt inside the frame");
+      return next;
+    });
+  };
+
   const reviewReceipt = async () => {
     if (!sections.length) return;
+    // A draft abandoned via review's back button must not linger once the
+    // user re-reviews; replace it so only one draft exists per scan flow.
+    if (activeDraftId.current) removeReceiptDraft(activeDraftId.current);
     const draft = createReceiptDraft(sections.map((section) => section.uri));
+    activeDraftId.current = draft.id;
     const ocrText = mergeReceiptSections(sections.map((section) => section.text));
     // ML Kit's plain text can flatten left/right receipt columns into an
-    // incorrect reading order. Keep its visual rows for product matching.
-    const extraction = parseReceiptText(ocrText, sections.flatMap((section) => section.lines));
+    // incorrect reading order. Keep its visual rows, grouped per captured
+    // section so the overlap between adjacent photos is merged, not doubled.
+    const extraction = parseReceiptText(ocrText, sections.map((section) => section.lines));
     updateReceiptDraft(draft.id, {
       status: "ready",
       ocrText,
@@ -123,6 +155,10 @@ export default function ScanScreen() {
   };
 
   const startOver = () => {
+    if (activeDraftId.current) {
+      removeReceiptDraft(activeDraftId.current);
+      activeDraftId.current = null;
+    }
     setSections([]);
     setPreviewUri(null);
     setStatus("Position the top of the receipt inside the frame");
@@ -190,6 +226,26 @@ export default function ScanScreen() {
           <MaterialIcons name="photo-library" size={21} color={colors.primary} /><Text style={[styles.secondaryText, { color: colors.text }]}>{sections.length ? "Add section from gallery" : "Choose from gallery"}</Text>
         </Pressable>
         {!!sections.length && (
+          <View style={[styles.sectionList, { borderColor: colors.border, backgroundColor: colors.surface }]}>
+            {sections.map((section, index) => (
+              <View key={`${section.uri}-${index}`} style={styles.sectionThumbWrap}>
+                <Image source={{ uri: section.uri }} style={[styles.sectionThumb, { borderColor: colors.border }]} contentFit="cover" />
+                <Text style={[styles.sectionThumbLabel, { color: colors.muted }]}>{index + 1}</Text>
+                <Pressable
+                  disabled={working}
+                  onPress={() => removeSection(index)}
+                  hitSlop={8}
+                  accessibilityLabel={`Remove section ${index + 1}`}
+                  accessibilityHint="Removes this captured receipt section so you can retake it"
+                  style={[styles.sectionRemove, { backgroundColor: colors.background, borderColor: colors.border }]}
+                >
+                  <MaterialIcons name="close" size={14} color={colors.text} />
+                </Pressable>
+              </View>
+            ))}
+          </View>
+        )}
+        {!!sections.length && (
           <View style={styles.receiptActions}>
             <Pressable disabled={working} onPress={() => void reviewReceipt()} style={({ pressed }) => [styles.reviewButton, { backgroundColor: colors.surface, borderColor: colors.primary }, (pressed || working) && styles.pressed]}>
               <MaterialIcons name="fact-check" size={21} color={colors.primary} /><Text style={[styles.reviewText, { color: colors.primary }]}>Review {sectionLabel}</Text>
@@ -219,6 +275,7 @@ const styles = StyleSheet.create({
   status: { minHeight: 56, borderRadius: 14, paddingHorizontal: 14, flexDirection: "row", alignItems: "center", gap: 9 }, statusCopy: { flex: 1, gap: 1 }, statusText: { fontSize: 13, lineHeight: 18, fontWeight: "600" }, sectionCount: { fontSize: 11, lineHeight: 15 },
   primary: { minHeight: 54, borderRadius: 16, alignItems: "center", justifyContent: "center", flexDirection: "row", gap: 9 }, primaryText: { color: "#FFFFFF", fontSize: 16, lineHeight: 21, fontWeight: "800" },
   secondary: { minHeight: 52, borderWidth: 1, borderRadius: 16, alignItems: "center", justifyContent: "center", flexDirection: "row", gap: 8 }, secondaryText: { fontSize: 15, lineHeight: 20, fontWeight: "700" },
+  sectionList: { borderWidth: 1, borderRadius: 14, padding: 10, flexDirection: "row", flexWrap: "wrap", gap: 10 }, sectionThumbWrap: { width: 56 }, sectionThumb: { width: 56, height: 74, borderWidth: 1, borderRadius: 9 }, sectionThumbLabel: { marginTop: 2, fontSize: 10, lineHeight: 14, fontWeight: "800", textAlign: "center" }, sectionRemove: { position: "absolute", top: -7, right: -7, width: 24, height: 24, borderRadius: 12, borderWidth: 1, alignItems: "center", justifyContent: "center" },
   receiptActions: { alignItems: "center", gap: 8 }, reviewButton: { width: "100%", minHeight: 52, borderWidth: 1, borderRadius: 16, alignItems: "center", justifyContent: "center", flexDirection: "row", gap: 8 }, reviewText: { fontSize: 15, lineHeight: 20, fontWeight: "800" }, restartButton: { minHeight: 32, justifyContent: "center", paddingHorizontal: 14 }, restartText: { fontSize: 13, lineHeight: 18, fontWeight: "700" },
   tip: { borderTopWidth: StyleSheet.hairlineWidth, marginTop: 4, paddingTop: 15, flexDirection: "row", gap: 9 }, tipText: { flex: 1, fontSize: 12, lineHeight: 17 }, pressed: { opacity: 0.7 },
 });
