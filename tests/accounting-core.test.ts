@@ -10,6 +10,7 @@ import {
   getPeriodRange,
   isDateInPeriodRange,
   parseAmountToMinor,
+  todayIsoDate,
   type Transaction,
 } from "../lib/types";
 
@@ -276,7 +277,7 @@ describe("receipt parser", () => {
     expect(result.amountMinor).toBeNull();
     expect(result.overallConfidence).toBeLessThan(HIGH_CONFIDENCE_THRESHOLD);
     expect(result.warnings).toContain("No reliable total was found.");
-    expect(result.warnings).toContain("Check the receipt date.");
+    expect(result.warnings).toContain("No date was found on the receipt — set the correct date below.");
   });
 });
 
@@ -304,6 +305,54 @@ describe("cart noise from a real ALDI scan", () => {
     const result = parseReceiptText("A L Di\nZAC DE LA POUTCHE\nBANANE 5 FRUITS 0,99\nMONTANT 0,99");
 
     expect(result.merchant).toBe("ALDI");
+  });
+});
+
+describe("real ALDI scan captured 2026-07-25", () => {
+  // Faithful to the on-device OCR diagnostic: the per-VAT-rate table prints a
+  // bare "HT" and "MONTANT TVA" column, and the receipt's own totals only
+  // appear once the description and price columns are rebuilt into rows.
+  const receipt = [
+    "ALD I",
+    "NECTARINES BLANCHES VRAC 2,74",
+    "0,686 kg x 3.99 \u20ac/kg",
+    "BRL IS OIGNONS 200G 1,69",
+    "TVA HT MONTANT TVA TTC",
+    "1 5,50%",
+    "HT",
+    "25,55",
+    "9,40",
+    "MONTANT TVA",
+    "1,41",
+    "1,88",
+    "TOTAL HT 34,95 \u20ac",
+    "TOTAL TVA 3,29 \u20ac",
+    "\u00c0 PAYER 38,24 \u20ac",
+  ].join("\n");
+
+  it("reads the receipt totals, not the per-rate VAT breakdown", () => {
+    const result = parseReceiptText(receipt);
+    expect(result.amountMinor).toBe(3_824);
+    expect(result.preTaxMinor).toBe(3_495);
+    expect(result.taxMinor).toBe(329);
+  });
+
+  it("treats a weight and unit-price line as part of the product above it", () => {
+    const result = parseReceiptText(receipt);
+    expect(result.lineItems.map((item) => item.name)).toEqual([
+      "NECTARINES BLANCHES VRAC",
+      "BRL IS OIGNONS 200G",
+    ]);
+  });
+
+  it("recovers the shop name from a logo split as \"ALD I\"", () => {
+    expect(parseReceiptText(receipt).merchant).toBe("ALDI");
+  });
+
+  it("says plainly when the receipt carried no readable date", () => {
+    const result = parseReceiptText(receipt);
+    expect(result.date).toBe(todayIsoDate());
+    expect(result.warnings).toContain("No date was found on the receipt \u2014 set the correct date below.");
   });
 });
 
