@@ -5,6 +5,7 @@ import {
   HIGH_CONFIDENCE_THRESHOLD,
   mergeReceiptSections,
   parseReceiptText,
+  rebuildReceiptVisualRows,
 } from "../lib/receipt-parser";
 import {
   getPeriodRange,
@@ -456,6 +457,49 @@ describe("cart reconciliation against the receipt total", () => {
 
     expect(result.warnings.some((w) => w.includes("were detected"))).toBe(true);
     expect(result.warnings.some((w) => w.startsWith("The items add up to"))).toBe(false);
+  });
+});
+
+describe("tightly printed receipt from a lower-resolution camera", () => {
+  // Real geometry from the Samsung SM-A137F scan, where text was ~26px tall
+  // instead of ~74px on the Pixel. Neighbouring printed rows overlapped by
+  // 0.28 of a line height, just past the old 0.25 cutoff, so the INFUSIONS
+  // price was absorbed into the row above and the product was dropped for
+  // having no price. Centres separate the rows unambiguously.
+  const line = (text: string, top: number, bottom: number, left: number) => ({
+    text,
+    top,
+    bottom,
+    left,
+    elements: [{ text, left }],
+  });
+
+  it("keeps each product with its own price", () => {
+    const rows = rebuildReceiptVisualRows([
+      line("1,69 \u20ac 1", 321, 349, 900),
+      line("BRETS OIGNONS 200G", 327, 353, 100),
+      line("1x 1,69 e", 354, 384, 200),
+      line("1,49 \u20ac 1", 376, 405, 900),
+      line("INFUSIONS A FROID", 381, 408, 100),
+      line("Ix 1,49 \u20ac", 406, 438, 200),
+    ]);
+
+    expect(rows).toContain("BRETS OIGNONS 200G 1,69 \u20ac 1");
+    expect(rows).toContain("INFUSIONS A FROID 1,49 \u20ac 1");
+    // The old behaviour fused two different products' prices into one row.
+    expect(rows.some((r) => r.includes("1,69") && r.includes("1,49"))).toBe(false);
+  });
+
+  it("still groups the widely spaced rows of a high-resolution scan", () => {
+    const rows = rebuildReceiptVisualRows([
+      line("0EUFS SOL X30", 1528, 1601, 717),
+      line("6,99 e 1", 1565, 1629, 1797),
+      line("1x", 1603, 1677, 932),
+      line("BAC PISTACHE", 1668, 1743, 712),
+    ]);
+
+    expect(rows[0]).toBe("0EUFS SOL X30 6,99 e 1");
+    expect(rows).toContain("BAC PISTACHE");
   });
 });
 

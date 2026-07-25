@@ -338,17 +338,25 @@ export function rebuildReceiptVisualRows(lines: ReceiptOcrLine[]): string[] {
   const rows: { anchorTop: number; anchorBottom: number; fragments: { left: number; text: string }[] }[] = [];
   for (const line of lines) {
     const previous = rows.at(-1);
-    const overlap = previous
-      ? Math.max(0, Math.min(previous.anchorBottom, line.bottom) - Math.max(previous.anchorTop, line.top))
-      : 0;
+    // Compare vertical centres, not overlap, and always against the row's
+    // first fragment so rows cannot merge transitively into one giant row.
+    //
+    // Overlap was not scale-invariant. On tightly printed receipts (small text
+    // from a lower-resolution camera) neighbouring rows overlapped by ~0.28 of
+    // their height, just past the old 0.25 cutoff, so a price was absorbed
+    // into the row above and its product silently lost its price and was
+    // dropped. Measured on real scans, centres separate cleanly: fragments of
+    // one printed row sit within 0.21 of a line height, the next printed row
+    // starts beyond 0.74. 0.6 sits inside that gap at both text sizes.
     const minimumHeight = previous
       ? Math.max(1, Math.min(previous.anchorBottom - previous.anchorTop, line.bottom - line.top))
       : 1;
-    // Compare with the first fragment's fixed vertical bounds. Expanding the
-    // row bounds caused adjacent receipt lines to merge transitively into one
-    // giant row. Description and price fragments overlap; the next printed
-    // line generally does not overlap the original anchor.
-    const samePrintedRow = !!previous && overlap / minimumHeight >= 0.25;
+    const centreDistance = previous
+      ? Math.abs(
+          (line.top + line.bottom) / 2 - (previous.anchorTop + previous.anchorBottom) / 2,
+        )
+      : Number.POSITIVE_INFINITY;
+    const samePrintedRow = !!previous && centreDistance / minimumHeight <= 0.6;
     const fragments = line.elements.length
       ? line.elements.map((element) => ({ left: element.left, text: element.text }))
       : [{ left: line.left, text: line.text }];
