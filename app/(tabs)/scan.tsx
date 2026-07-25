@@ -96,8 +96,40 @@ export default function ScanScreen() {
     }
   };
 
+  /**
+   * Retrying a bad read is the common case, so a fresh scanner session
+   * replaces what was captured. ML Kit already captures multiple pages in one
+   * session, so silently appending each session's pages was what produced
+   * duplicated cart items whenever the user re-scanned.
+   */
+  const confirmScanIntent = async (): Promise<"replace" | "add" | "cancel"> => {
+    if (!sections.length) return "replace";
+    return new Promise((resolve) => {
+      Alert.alert(
+        "Scan again",
+        `You already captured ${sections.length === 1 ? "1 page" : `${sections.length} pages`}. Replace them with this new scan, or add more pages to the same receipt?`,
+        [
+          { text: "Cancel", style: "cancel", onPress: () => resolve("cancel") },
+          { text: "Add pages", onPress: () => resolve("add") },
+          { text: "Replace", style: "destructive", onPress: () => resolve("replace") },
+        ],
+        { cancelable: true, onDismiss: () => resolve("cancel") },
+      );
+    });
+  };
+
   const scanReceipt = async () => {
     if (working) return;
+    const intent = await confirmScanIntent();
+    if (intent === "cancel") return;
+    if (intent === "replace") {
+      if (activeDraftId.current) {
+        removeReceiptDraft(activeDraftId.current);
+        activeDraftId.current = null;
+      }
+      setSections([]);
+      setPreviewUri(null);
+    }
     setCameraOpen(false);
     setWorking(true);
     setStatus("Opening Google's on-device document scanner…");
@@ -253,7 +285,7 @@ export default function ScanScreen() {
         </View>
         {docScannerAvailable && !cameraOpen && (
           <Pressable disabled={working} onPress={() => void scanReceipt()} style={({ pressed }) => [styles.primary, { backgroundColor: colors.primary }, (pressed || working) && styles.pressed]}>
-            <MaterialIcons name="document-scanner" size={22} color="#FFFFFF" /><Text style={styles.primaryText}>{sections.length ? "Scan next section" : "Scan receipt"}</Text>
+            <MaterialIcons name="document-scanner" size={22} color="#FFFFFF" /><Text style={styles.primaryText}>{sections.length ? "Scan again" : "Scan receipt"}</Text>
           </Pressable>
         )}
         {cameraOpen ? (

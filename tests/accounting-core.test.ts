@@ -177,6 +177,30 @@ describe("receipt parser", () => {
     ])).toBe("Market\nApples 2.50\nPasta 1.20\nMilk 1.80\nTOTAL 5.50");
   });
 
+  it("keeps a distinct item whose only difference from the previous line is its price", () => {
+    // Regression: similarity-based overlap deleted "LAIT 1,85" because it
+    // scored ~0.89 against "LAIT 1,05". On receipts the price is often the
+    // only distinguishing content, so digits must be significant.
+    expect(mergeReceiptSections([
+      "CARREFOUR\nPAIN 1,20\nLAIT 1,05",
+      "LAIT 1,85\nOEUFS 2,99\nTOTAL 7,09",
+    ])).toBe("CARREFOUR\nPAIN 1,20\nLAIT 1,05\nLAIT 1,85\nOEUFS 2,99\nTOTAL 7,09");
+  });
+
+  it("still merges an overlapped region read with letter-level OCR noise", () => {
+    expect(mergeReceiptSections([
+      "Market\nOEUFS SOL X30 6,99\nBAC PISTACHE 2,69",
+      "0EUFS S0L X30 6,99\nBAC PlSTACHE 2,69\nMilk 1,80\nTOTAL 11,48",
+    ])).toBe("Market\nOEUFS SOL X30 6,99\nBAC PISTACHE 2,69\nMilk 1,80\nTOTAL 11,48");
+  });
+
+  it("never merges away a differing date or total", () => {
+    expect(mergeReceiptSections([
+      "ALDI\n12/03/2026\nTOTAL 14,82",
+      "12/08/2026\nTOTAL 14,92",
+    ])).toBe("ALDI\n12/03/2026\nTOTAL 14,82\n12/08/2026\nTOTAL 14,92");
+  });
+
   it("joins overlapping sections even when OCR reads the shared lines slightly differently", () => {
     expect(mergeReceiptSections([
       "Market\nOEUFS SOL X30 6,99\nBAC PISTACHE 2,69",

@@ -146,10 +146,36 @@ export function receiptLineSimilarity(a: string, b: string): number {
   return 1 - distance / Math.max(left.length, right.length);
 }
 
-const SECTION_OVERLAP_SIMILARITY = 0.8;
+/**
+ * Collapses the letter shapes OCR routinely confuses (O/0, I/l/1, S/5, B/8)
+ * while keeping every digit significant.
+ *
+ * Similarity alone is unsafe here: on a receipt the price is often the only
+ * thing separating two lines, so "LAIT 1,05" and "LAIT 1,85" score ~0.89 and
+ * a similarity threshold silently deletes a real purchase. Digits must match
+ * exactly; only ambiguous letter glyphs may vary.
+ */
+function overlapKey(value: string): string {
+  return normalizedLine(value)
+    .normalize("NFD")
+    .replace(/\p{M}/gu, "")
+    .replace(/[^\p{L}\p{N}]+/gu, "")
+    .replace(/[o]/g, "0")
+    .replace(/[il]/g, "1")
+    .replace(/[s]/g, "5")
+    .replace(/[b]/g, "8");
+}
 
+/**
+ * Exact equality of the canonical key. No similarity tolerance: a missed
+ * merge merely repeats a line, which item de-duplication then catches, but a
+ * false merge deletes a real purchase and cannot be recovered. Erring toward
+ * keeping data is the only safe direction here.
+ */
 function isSameReceiptLine(a: string, b: string): boolean {
-  return receiptLineSimilarity(a, b) >= SECTION_OVERLAP_SIMILARITY;
+  const left = overlapKey(a);
+  const right = overlapKey(b);
+  return !!left && left === right;
 }
 
 function mergeSectionLineArrays(sections: string[][]): string[] {
