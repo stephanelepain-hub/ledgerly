@@ -57,6 +57,11 @@ export default function TransactionFormScreen() {
   const [description, setDescription] = useState(first(params.description) ?? "");
   const [notes, setNotes] = useState("");
   const [isSaving, setIsSaving] = useState(false);
+  const [saved, setSaved] = useState(false);
+  // Two confirmation dialogs can be queued by a fast double tap, and state
+  // updates are asynchronous. Only a synchronous guard prevents a second
+  // write creating a duplicate transaction.
+  const saveGuard = useRef(false);
   const [submitted, setSubmitted] = useState(false);
 
   const receiptUri = first(params.receiptUri) ?? existing?.receiptUri ?? null;
@@ -129,7 +134,9 @@ export default function TransactionFormScreen() {
   }, [amountMinor, date, merchant, description, transactions, existing?.id, type]);
 
   const commitSave = async () => {
+    if (saveGuard.current) return;
     if (!amountMinor || !isValid) return;
+    saveGuard.current = true;
     setIsSaving(true);
     try {
       await upsertTransaction({
@@ -146,21 +153,28 @@ export default function TransactionFormScreen() {
         extractionSource,
         lineItems,
       });
+      // Retire the save affordance before navigating; this screen is a
+      // fullScreenModal and stays mounted through the dismiss animation.
+      setSaved(true);
+      setIsSaving(false);
       if (Platform.OS !== "web") {
         await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
       }
-      router.back();
+      if (router.canGoBack()) router.back();
+      else router.replace("/" as never);
     } catch (error) {
+      // The write failed, so allow another attempt.
+      saveGuard.current = false;
+      setIsSaving(false);
       Alert.alert(
         "Could not save",
         error instanceof Error ? error.message : "Ledgerly could not save this transaction.",
       );
-    } finally {
-      setIsSaving(false);
     }
   };
 
   const requestSave = () => {
+    if (saveGuard.current || isSaving || saved) return;
     setSubmitted(true);
     if (!isValid || !amountMinor) return;
     const summary = `${type === "expense" ? "Expense" : "Income"} of ${formatMoney(amountMinor)}${
@@ -432,20 +446,27 @@ export default function TransactionFormScreen() {
         </ScrollView>
 
         <View style={[styles.footer, { backgroundColor: colors.background, borderTopColor: colors.border }]}>
-          <Pressable
-            disabled={isSaving}
-            onPress={requestSave}
-            style={({ pressed }) => [
-              styles.saveButton,
-              { backgroundColor: colors.primary },
-              isSaving && styles.disabled,
-              pressed && styles.primaryPressed,
-            ]}
-          >
-            <MaterialIcons name="check" size={21} color="#FFFFFF" />
-            <Text style={styles.saveText}>{isSaving ? "Saving…" : "Confirm & save"}</Text>
-          </Pressable>
-          <Text style={[styles.footerNote, { color: colors.muted }]}>Nothing is saved until you confirm.</Text>
+          {saved ? (
+            <View accessibilityRole="summary" style={[styles.savedNotice, { borderColor: colors.primary, backgroundColor: `${colors.primary}12` }]}>
+              <MaterialIcons name="check-circle" size={21} color={colors.primary} />
+              <Text style={[styles.savedNoticeText, { color: colors.text }]}>Saved to your ledger</Text>
+            </View>
+          ) : (
+            <Pressable
+              disabled={isSaving}
+              onPress={requestSave}
+              style={({ pressed }) => [
+                styles.saveButton,
+                { backgroundColor: colors.primary },
+                isSaving && styles.disabled,
+                pressed && styles.primaryPressed,
+              ]}
+            >
+              <MaterialIcons name="check" size={21} color="#FFFFFF" />
+              <Text style={styles.saveText}>{isSaving ? "Saving…" : "Confirm & save"}</Text>
+            </Pressable>
+          )}
+          {!saved && <Text style={[styles.footerNote, { color: colors.muted }]}>Nothing is saved until you confirm.</Text>}
         </View>
       </KeyboardAvoidingView>
     </ScreenContainer>
@@ -530,5 +551,7 @@ const styles = StyleSheet.create({
   saveButton: { minHeight: 52, borderRadius: 16, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 8 },
   saveText: { color: "#FFFFFF", fontSize: 16, lineHeight: 22, fontWeight: "800" },
   footerNote: { fontSize: 11, lineHeight: 15, textAlign: "center" },
+  savedNotice: { minHeight: 52, borderRadius: 16, borderWidth: 1, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 8 },
+  savedNoticeText: { fontSize: 15, lineHeight: 20, fontWeight: "800" },
   disabled: { opacity: 0.55 },
 });

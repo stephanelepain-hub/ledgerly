@@ -2,7 +2,7 @@ import MaterialIcons from "@expo/vector-icons/MaterialIcons";
 import * as Haptics from "expo-haptics";
 import { Image } from "expo-image";
 import { router, useLocalSearchParams } from "expo-router";
-import { useMemo, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 import {
   ActivityIndicator,
   Alert,
@@ -37,7 +37,10 @@ import { createId, formatMoney, parseAmountToMinor, todayIsoDate, type ReceiptLi
 export default function ReceiptReviewScreen() {
   const colors = useColors();
   const { draftId } = useLocalSearchParams<{ draftId?: string }>();
-  const draft = draftId ? getReceiptDraft(draftId) : null;
+  // Snapshot the draft once. Reading the store on every render made the
+  // screen flip to "Receipt review expired" the moment the saved draft was
+  // removed, before the modal finished dismissing.
+  const [draft] = useState(() => (draftId ? getReceiptDraft(draftId) : null));
   const initial = draft?.extraction;
   const { categories, upsertTransaction } = useAccounting();
   const [amount, setAmount] = useState(
@@ -52,6 +55,10 @@ export default function ReceiptReviewScreen() {
     draft?.extractionSource ?? "local_ocr",
   );
   const [isSaving, setIsSaving] = useState(false);
+  const [saved, setSaved] = useState(false);
+  // React state updates are asynchronous, so the button's `disabled` prop
+  // cannot stop a fast double tap. This synchronous guard can.
+  const saveGuard = useRef(false);
   const [lineItems, setLineItems] = useState<ReceiptLineItem[]>(initial?.lineItems ?? []);
   // Cart prices are edited as raw text and parsed on blur/save. Parsing and
   // re-formatting on every keystroke corrupted typed amounts (e.g. "450"
@@ -166,6 +173,7 @@ export default function ReceiptReviewScreen() {
   };
 
   const confirmAndSave = async () => {
+    if (saveGuard.current) return;
     if (!draft) {
       Alert.alert("Receipt no longer available", "Return to Scan and choose the image again.");
       return;
@@ -187,6 +195,7 @@ export default function ReceiptReviewScreen() {
       return;
     }
 
+    saveGuard.current = true;
     setIsSaving(true);
     try {
       // Copy the receipt image out of the volatile camera/picker cache before
@@ -216,17 +225,26 @@ export default function ReceiptReviewScreen() {
           .filter((item) => item.name.length > 0),
       });
       removeReceiptDraft(draft.id);
+      // Retire the save affordance before navigating. The screen is a
+      // fullScreenModal, so it stays mounted through the dismiss animation
+      // and must not keep offering to save an already-saved receipt.
+      setSaved(true);
+      setIsSaving(false);
       if (Platform.OS !== "web") {
         await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
       }
-      router.replace("/" as never);
+      // `replace` targeted the tab anchor already at the bottom of the stack
+      // and left this modal presented. Dismiss the modal instead.
+      if (router.canDismiss()) router.dismissTo("/" as never);
+      else router.replace("/" as never);
     } catch (error) {
+      // The write failed, so allow another attempt.
+      saveGuard.current = false;
+      setIsSaving(false);
       Alert.alert(
         "Could not save",
         error instanceof Error ? error.message : "The transaction was not saved.",
       );
-    } finally {
-      setIsSaving(false);
     }
   };
 
@@ -401,10 +419,17 @@ export default function ReceiptReviewScreen() {
         </ScrollView>
 
         <View style={[styles.footer, { borderTopColor: colors.border, backgroundColor: colors.background }]}>
-          <Pressable disabled={isSaving} onPress={() => void confirmAndSave()} style={({ pressed }) => [styles.saveButton, { backgroundColor: colors.primary }, isSaving && styles.disabled, pressed && styles.savePressed]}>
-            {isSaving ? <ActivityIndicator size="small" color="#FFFFFF" /> : <MaterialIcons name="check" size={22} color="#FFFFFF" />}
-            <Text style={styles.saveText}>{isSaving ? "Saving…" : "Confirm and save"}</Text>
-          </Pressable>
+          {saved ? (
+            <View accessibilityRole="summary" style={[styles.savedNotice, { borderColor: colors.primary, backgroundColor: `${colors.primary}12` }]}>
+              <MaterialIcons name="check-circle" size={22} color={colors.primary} />
+              <Text style={[styles.savedNoticeText, { color: colors.text }]}>Saved to your ledger</Text>
+            </View>
+          ) : (
+            <Pressable disabled={isSaving} onPress={() => void confirmAndSave()} style={({ pressed }) => [styles.saveButton, { backgroundColor: colors.primary }, isSaving && styles.disabled, pressed && styles.savePressed]}>
+              {isSaving ? <ActivityIndicator size="small" color="#FFFFFF" /> : <MaterialIcons name="check" size={22} color="#FFFFFF" />}
+              <Text style={styles.saveText}>{isSaving ? "Saving…" : "Confirm and save"}</Text>
+            </Pressable>
+          )}
         </View>
       </KeyboardAvoidingView>
     </ScreenContainer>
@@ -483,6 +508,8 @@ const styles = StyleSheet.create({
   footer: { borderTopWidth: StyleSheet.hairlineWidth, paddingHorizontal: 17, paddingTop: 12, paddingBottom: 12 },
   saveButton: { minHeight: 54, borderRadius: 16, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 8 },
   saveText: { color: "#FFFFFF", fontSize: 16, lineHeight: 21, fontWeight: "800" },
+  savedNotice: { minHeight: 54, borderRadius: 16, borderWidth: 1, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 8 },
+  savedNoticeText: { fontSize: 15, lineHeight: 20, fontWeight: "800" },
   savePressed: { opacity: 0.88, transform: [{ scale: 0.985 }] },
   pressed: { opacity: 0.62 },
   disabled: { opacity: 0.55 },
