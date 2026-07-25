@@ -38,9 +38,16 @@ yarn-error.*
 
 app-example
 
-# generated native folders
+# Generated native folders.
+#
+# `android/` is deliberately COMMITTED. It carries the bespoke Play
+# upload-signing config (with its refuse-to-use-the-debug-key guard) and
+# `app/debug.keystore`, which defines the signature lineage that lets
+# local-test APKs update in place without wiping on-device ledger data.
+# Regenerating it would destroy both. Do not run `expo prebuild --clean`
+# against this project. Android build artifacts stay out of Git via
+# `android/.gitignore` (build/, .gradle, local.properties, .cxx/).
 /ios
-/android
 
 # IDE
 .vscode/
