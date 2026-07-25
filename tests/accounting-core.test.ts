@@ -177,6 +177,64 @@ describe("receipt parser", () => {
     ])).toBe("Market\nApples 2.50\nPasta 1.20\nMilk 1.80\nTOTAL 5.50");
   });
 
+  it("joins overlapping sections even when OCR reads the shared lines slightly differently", () => {
+    expect(mergeReceiptSections([
+      "Market\nOEUFS SOL X30 6,99\nBAC PISTACHE 2,69",
+      "0EUFS SOL X30 6,99\nBAC P1STACHE 2,69\nMilk 1,80\nTOTAL 11,48",
+    ])).toBe("Market\nOEUFS SOL X30 6,99\nBAC PISTACHE 2,69\nMilk 1,80\nTOTAL 11,48");
+  });
+
+  it("does not duplicate cart items from the overlapped region between sections", () => {
+    const sectionOne = [
+      { text: "CITY MARKET", top: 10, bottom: 18, left: 0, elements: [{ text: "CITY MARKET", left: 0 }] },
+      { text: "OEUFS SOL X30 6,99 €", top: 30, bottom: 38, left: 0, elements: [{ text: "OEUFS SOL X30 6,99 €", left: 0 }] },
+      { text: "BAC PISTACHE 2,69 €", top: 50, bottom: 58, left: 0, elements: [{ text: "BAC PISTACHE 2,69 €", left: 0 }] },
+    ];
+    // The second close-up photo restarts at the top of its own frame and
+    // re-reads the overlapped row with a typical OCR variation (O → 0).
+    const sectionTwo = [
+      { text: "BAC P1STACHE 2,69 €", top: 8, bottom: 16, left: 0, elements: [{ text: "BAC P1STACHE 2,69 €", left: 0 }] },
+      { text: "CHAOURCE AOP 250G 3,55 €", top: 28, bottom: 36, left: 0, elements: [{ text: "CHAOURCE AOP 250G 3,55 €", left: 0 }] },
+      { text: "A PAYER 13,23 €", top: 48, bottom: 56, left: 0, elements: [{ text: "A PAYER 13,23 €", left: 0 }] },
+    ];
+
+    const result = parseReceiptText(
+      mergeReceiptSections([
+        "CITY MARKET\nOEUFS SOL X30 6,99 €\nBAC PISTACHE 2,69 €",
+        "BAC P1STACHE 2,69 €\nCHAOURCE AOP 250G 3,55 €\nA PAYER 13,23 €",
+      ]),
+      [sectionOne, sectionTwo],
+    );
+
+    expect(result.lineItems.map((item) => [item.name, item.lineTotalMinor])).toEqual([
+      ["OEUFS SOL X30", 699],
+      ["BAC PISTACHE", 269],
+      ["CHAOURCE AOP 250G", 355],
+    ]);
+  });
+
+  it("drops a re-scanned item whose name OCR differs but price matches", () => {
+    const result = parseReceiptText(
+      "MARKET\nJAMBON SANS NITRITE 140G 1,59 €\nCHAOURCE AOP 250G 3,55 €\nJAMBON SANS NÍ TRITE 1406 1,59 €\nTOTAL 5,14 €",
+    );
+
+    expect(result.lineItems.map((item) => [item.name, item.lineTotalMinor])).toEqual([
+      ["JAMBON SANS NITRITE 140G", 159],
+      ["CHAOURCE AOP 250G", 355],
+    ]);
+  });
+
+  it("keeps genuinely repeated same-price different products", () => {
+    const result = parseReceiptText(
+      "MARKET\nAPPLES GALA 1,99\nPEARS WILLIAMS 1,99\nTOTAL 3,98",
+    );
+
+    expect(result.lineItems.map((item) => [item.name, item.lineTotalMinor])).toEqual([
+      ["APPLES GALA", 199],
+      ["PEARS WILLIAMS", 199],
+    ]);
+  });
+
   it("parses ambiguous numeric dates day-first for European receipts", () => {
     const ambiguous = parseReceiptText("ALDI\n05/07/2026\nTOTAL 14,82");
     expect(ambiguous.date).toBe("2026-07-05");
