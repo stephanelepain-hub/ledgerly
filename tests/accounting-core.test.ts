@@ -280,6 +280,33 @@ describe("receipt parser", () => {
   });
 });
 
+describe("cart noise from a real ALDI scan", () => {
+  it("keeps the receipt total and meal-voucher tender out of the cart", () => {
+    const result = parseReceiptText(
+      "A L Di\nBANANE 5 FRUITS 0,99\nJAMBON SANS NITRITE 140G 1,59\nCHAOURCE AOP 250G 3,55\nTitre restaurant 19,81\nMONTANT 19,81",
+    );
+
+    expect(result.lineItems.map((item) => item.name)).toEqual([
+      "BANANE 5 FRUITS",
+      "JAMBON SANS NITRITE 140G",
+      "CHAOURCE AOP 250G",
+    ]);
+    expect(result.amountMinor).toBe(1981);
+  });
+
+  it("rejects a stray OCR fragment that would borrow a neighbouring price", () => {
+    const result = parseReceiptText("MARKET\nJAMBON SANS NITRITE 140G 1,59\n|x\n1,59\nMONTANT 1,59");
+
+    expect(result.lineItems.map((item) => item.name)).toEqual(["JAMBON SANS NITRITE 140G"]);
+  });
+
+  it("recovers a shop name split into single glyphs", () => {
+    const result = parseReceiptText("A L Di\nZAC DE LA POUTCHE\nBANANE 5 FRUITS 0,99\nMONTANT 0,99");
+
+    expect(result.merchant).toBe("ALDI");
+  });
+});
+
 describe("duplicate receipt detection", () => {
   const ledger = [
     transaction({ id: "aldi", amountMinor: 1_482, date: "2026-03-12", merchant: "ALDI" }),
