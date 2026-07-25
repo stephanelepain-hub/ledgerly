@@ -4,11 +4,12 @@ import { Image } from "expo-image";
 import * as ImagePicker from "expo-image-picker";
 import { router, useFocusEffect } from "expo-router";
 import { useCallback, useEffect, useRef, useState } from "react";
-import { ActivityIndicator, Alert, Linking, Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
+import { ActivityIndicator, Alert, Linking, Platform, Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
 
 import { ScreenContainer } from "@/components/screen-container";
 import { useColors } from "@/hooks/use-colors";
 import { saveLatestReceiptOcrDiagnostic } from "@/lib/receipt-debug";
+import { launchReceiptDocumentScanner } from "@/lib/receipt-document-scanner";
 import { createReceiptDraft, getReceiptDraft, removeReceiptDraft, updateReceiptDraft } from "@/lib/receipt-draft-store";
 import { mergeReceiptSections, parseReceiptText } from "@/lib/receipt-parser";
 import { recognizeReceiptText, type ReceiptOcrLine } from "@/lib/receipt-ocr";
@@ -30,7 +31,14 @@ export default function ScanScreen() {
   const [working, setWorking] = useState(false);
   const [previewUri, setPreviewUri] = useState<string | null>(null);
   const [sections, setSections] = useState<ReceiptSection[]>([]);
-  const [status, setStatus] = useState("Preparing scanner…");
+  // Google's ML Kit document scanner (edge detection, crop, deskew, shadow
+  // and contrast cleanup) dramatically improves OCR on low-grade cameras.
+  // It is Android-only and needs Google Play services; the manual camera
+  // flow remains as the fallback.
+  const [docScannerAvailable, setDocScannerAvailable] = useState(Platform.OS === "android");
+  const [status, setStatus] = useState(
+    Platform.OS === "android" ? "Ready to scan a receipt" : "Preparing scanner…",
+  );
 
   const openCamera = useCallback(async () => {
     const result = permission?.granted ? permission : await requestPermission();
@@ -45,10 +53,10 @@ export default function ScanScreen() {
   }, [permission, requestPermission]);
 
   useEffect(() => {
-    if (openedOnce.current) return;
+    if (openedOnce.current || docScannerAvailable) return;
     openedOnce.current = true;
     void openCamera();
-  }, [openCamera]);
+  }, [openCamera, docScannerAvailable]);
 
   // When the reviewed draft was consumed (saved), clear the captured sections.
   // The Scan tab stays mounted, so stale sections would otherwise leak into
@@ -83,6 +91,36 @@ export default function ScanScreen() {
         "Could not scan this section",
         error instanceof Error ? error.message : "Try a clearer, closer photo or enter the transaction manually.",
       );
+    } finally {
+      setWorking(false);
+    }
+  };
+
+  const scanReceipt = async () => {
+    if (working) return;
+    setCameraOpen(false);
+    setWorking(true);
+    setStatus("Opening Google's on-device document scanner…");
+    try {
+      const pages = await launchReceiptDocumentScanner({ pageLimit: 5 });
+      if (pages === null) {
+        setDocScannerAvailable(false);
+        setStatus("The document scanner is unavailable on this device — use the manual camera.");
+        return;
+      }
+      if (!pages.length) {
+        setStatus(sections.length
+          ? "Scan cancelled. Review the captured sections or scan again."
+          : "Scan cancelled");
+        return;
+      }
+      setWorking(false);
+      for (const uri of pages) {
+        await processSection(uri);
+      }
+    } catch (error) {
+      setStatus("Could not scan the receipt");
+      Alert.alert("Could not scan", error instanceof Error ? error.message : "Please try again.");
     } finally {
       setWorking(false);
     }
@@ -175,7 +213,7 @@ export default function ScanScreen() {
         <View>
           <Text style={[styles.eyebrow, { color: colors.primary }]}>RECEIPT CAPTURE</Text>
           <Text style={[styles.title, { color: colors.text }]}>Scan receipt</Text>
-          <Text style={[styles.subtitle, { color: colors.muted }]}>For a long receipt, take close-up sections from top to bottom and overlap each one slightly.</Text>
+          <Text style={[styles.subtitle, { color: colors.muted }]}>Scanning auto-crops, straightens, and cleans the receipt before on-device text recognition. For a long receipt, capture sections top to bottom with a slight overlap.</Text>
         </View>
         <View style={[styles.cameraCard, { backgroundColor: colors.surface, borderColor: colors.border }]}>
           {cameraOpen ? (
@@ -213,13 +251,32 @@ export default function ScanScreen() {
             {!!sections.length && <Text style={[styles.sectionCount, { color: colors.muted }]}>{sectionLabel} recognized locally</Text>}
           </View>
         </View>
-        {permissionBlocked ? (
-          <Pressable onPress={permission.canAskAgain ? () => void openCamera() : openSettings} style={({ pressed }) => [styles.primary, { backgroundColor: colors.primary }, pressed && styles.pressed]}>
-            <MaterialIcons name="settings" size={21} color="#FFFFFF" /><Text style={styles.primaryText}>{permission.canAskAgain ? "Allow camera access" : "Open Android settings"}</Text>
+        {docScannerAvailable && !cameraOpen && (
+          <Pressable disabled={working} onPress={() => void scanReceipt()} style={({ pressed }) => [styles.primary, { backgroundColor: colors.primary }, (pressed || working) && styles.pressed]}>
+            <MaterialIcons name="document-scanner" size={22} color="#FFFFFF" /><Text style={styles.primaryText}>{sections.length ? "Scan next section" : "Scan receipt"}</Text>
+          </Pressable>
+        )}
+        {cameraOpen ? (
+          <Pressable disabled={working || !cameraReady} onPress={capture} style={({ pressed }) => [styles.primary, { backgroundColor: colors.primary }, (pressed || working || !cameraReady) && styles.pressed]}>
+            <MaterialIcons name="photo-camera" size={22} color="#FFFFFF" /><Text style={styles.primaryText}>Capture section</Text>
+          </Pressable>
+        ) : permissionBlocked ? (
+          docScannerAvailable ? (
+            <Pressable onPress={permission.canAskAgain ? () => void openCamera() : openSettings} style={({ pressed }) => [styles.secondary, { borderColor: colors.border, backgroundColor: colors.surface }, pressed && styles.pressed]}>
+              <MaterialIcons name="photo-camera" size={21} color={colors.primary} /><Text style={[styles.secondaryText, { color: colors.text }]}>{permission.canAskAgain ? "Use manual camera" : "Allow camera in Android settings"}</Text>
+            </Pressable>
+          ) : (
+            <Pressable onPress={permission.canAskAgain ? () => void openCamera() : openSettings} style={({ pressed }) => [styles.primary, { backgroundColor: colors.primary }, pressed && styles.pressed]}>
+              <MaterialIcons name="settings" size={21} color="#FFFFFF" /><Text style={styles.primaryText}>{permission.canAskAgain ? "Allow camera access" : "Open Android settings"}</Text>
+            </Pressable>
+          )
+        ) : docScannerAvailable ? (
+          <Pressable disabled={working} onPress={() => void openCamera()} style={({ pressed }) => [styles.secondary, { borderColor: colors.border, backgroundColor: colors.surface }, (pressed || working) && styles.pressed]}>
+            <MaterialIcons name="photo-camera" size={21} color={colors.primary} /><Text style={[styles.secondaryText, { color: colors.text }]}>Use manual camera</Text>
           </Pressable>
         ) : (
-          <Pressable disabled={working || (cameraOpen && !cameraReady)} onPress={cameraOpen ? capture : () => void openCamera()} style={({ pressed }) => [styles.primary, { backgroundColor: colors.primary }, (pressed || working || (cameraOpen && !cameraReady)) && styles.pressed]}>
-            <MaterialIcons name={cameraOpen ? "photo-camera" : "add-a-photo"} size={22} color="#FFFFFF" /><Text style={styles.primaryText}>{cameraOpen ? "Capture section" : sections.length ? "Add next section" : "Open scanner"}</Text>
+          <Pressable disabled={working} onPress={() => void openCamera()} style={({ pressed }) => [styles.primary, { backgroundColor: colors.primary }, (pressed || working) && styles.pressed]}>
+            <MaterialIcons name="add-a-photo" size={22} color="#FFFFFF" /><Text style={styles.primaryText}>{sections.length ? "Add next section" : "Open scanner"}</Text>
           </Pressable>
         )}
         <Pressable disabled={working} onPress={() => void pickImage()} style={({ pressed }) => [styles.secondary, { borderColor: colors.border, backgroundColor: colors.surface }, (pressed || working) && styles.pressed]}>
