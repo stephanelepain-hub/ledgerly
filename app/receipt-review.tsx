@@ -435,6 +435,10 @@ export default function ReceiptReviewScreen() {
 
           {!!extraction?.warnings.length && (
             <View style={styles.warningList}>
+              {/* Framing matters: a warning read as a malfunction pushes the
+                  user to rescan, and repeated rescans were the original source
+                  of duplicated cart items. Correcting a field here is normal. */}
+              <Text style={[styles.warningListIntro, { color: colors.text }]}>Ledgerly is unsure about the items below. Correcting them here is normal.</Text>
               {extraction.warnings.map((warning) => (
                 <View key={warning} style={styles.warningLine}>
                   <MaterialIcons name="error-outline" size={17} color={colors.warning} />
@@ -552,6 +556,7 @@ const styles = StyleSheet.create({
   addItem: { minHeight: 34, flexDirection: "row", alignItems: "center", gap: 4 },
   addItemText: { fontSize: 12, lineHeight: 17, fontWeight: "800" },
   warningList: { gap: 6 },
+  warningListIntro: { fontSize: 12, lineHeight: 17, fontWeight: "700" },
   warningLine: { flexDirection: "row", alignItems: "center", gap: 7 },
   warningLineText: { fontSize: 12, lineHeight: 17, flex: 1 },
   formSection: { gap: 8 },

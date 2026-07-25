@@ -262,6 +262,12 @@ export default function ScanScreen() {
           <Text style={[styles.eyebrow, { color: colors.primary }]}>RECEIPT CAPTURE</Text>
           <Text style={[styles.title, { color: colors.text }]}>Scan receipt</Text>
           <Text style={[styles.subtitle, { color: colors.muted }]}>Scanning auto-crops, straightens, and cleans the receipt before on-device text recognition. For a long receipt, capture sections top to bottom with a slight overlap.</Text>
+          {/* Reading quality depends on the camera and on how the till printed
+              the receipt, and no parser work makes that uniform across phones.
+              Saying so plainly is what stops a mediocre read from being read as
+              a malfunction — which is what drove users to rescan repeatedly and
+              pile duplicates into the cart. */}
+          <Text style={[styles.note, { color: colors.muted }]}>Camera and print quality vary, so check the total and date before saving. Ledgerly flags anything that does not add up.</Text>
         </View>
         <View style={[styles.cameraCard, { backgroundColor: colors.surface, borderColor: colors.border }]}>
           {cameraOpen ? (
@@ -390,6 +396,7 @@ const styles = StyleSheet.create({
   eyebrow: { fontSize: 11, lineHeight: 15, fontWeight: "800", letterSpacing: 1.5 },
   title: { fontSize: 34, lineHeight: 40, fontWeight: "800", letterSpacing: -0.8 },
   subtitle: { marginTop: 4, fontSize: 13, lineHeight: 19 },
+  note: { marginTop: 7, fontSize: 12, lineHeight: 17 },
   cameraCard: { height: 330, borderWidth: 1, borderRadius: 22, overflow: "hidden" }, camera: { flex: 1 },
   emptyCamera: { alignItems: "center", justifyContent: "center", padding: 32, gap: 8 }, emptyTitle: { fontSize: 18, lineHeight: 24, fontWeight: "800" }, emptyBody: { fontSize: 13, lineHeight: 19, textAlign: "center", maxWidth: 250 },
   frame: { ...StyleSheet.absoluteFillObject, alignItems: "center", justifyContent: "center" }, frameShade: { ...StyleSheet.absoluteFillObject, backgroundColor: "#00000022" }, frameBox: { width: "82%", height: "70%", borderWidth: 2, borderRadius: 16 }, frameHint: { position: "absolute", bottom: 14, color: "#FFFFFF", fontSize: 10, lineHeight: 14, fontWeight: "900", letterSpacing: 1.1, textShadowColor: "#000000AA", textShadowRadius: 4 },

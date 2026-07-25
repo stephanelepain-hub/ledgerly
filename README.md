@@ -58,6 +58,33 @@ The native development build derives the optional cloud server address from Expo
 
 The interface was visually checked at a **412 × 915** Pixel-class portrait viewport. Pixel 8 Pro and Android 17 remain compatible with the API 26 minimum because the minimum SDK controls the oldest supported Android release, not the newest supported device.
 
+## Receipt reading accuracy
+
+How well a receipt reads depends on the phone's camera and on how the till
+printed the receipt, and no amount of parser work makes that uniform across
+devices. Measured on the same ALDI receipt, the ML Kit document scanner returned
+a page image about **3,500 px** tall on a Pixel 8 Pro (median glyph height
+~74 px) and about **1,200 px** on a Samsung SM-A137F (~22 px). ML Kit's Latin
+recognizer needs roughly 16–20 px of character height to be dependable, so the
+Pixel has ample margin while the weaker camera runs at the limit — any small
+loss of focus or glare crosses it.
+
+The deliberate decision is therefore **not** to chase per-device accuracy, but to
+be accurate about uncertainty:
+
+- The parser refuses to be silently wrong. It warns when the cart does not add up
+  to the printed total, when fewer items were found than the receipt declares,
+  when the receipt's printed dates disagree, and when no reliable total was read.
+- Nothing is written to the ledger until the user confirms, and every field stays
+  editable.
+- The Scan tab states that camera and print quality vary and that totals should
+  be checked; the review screen frames its warnings as ordinary corrections. A
+  warning that reads like a malfunction pushes users to rescan repeatedly, and
+  repeated rescans were the original cause of duplicated cart items.
+- Capturing a long receipt as two or three closer sections raises effective
+  glyph resolution far more than better lighting does. Both clean scans on the
+  weaker camera were two-section captures.
+
 ## Privacy behavior
 
 Receipt images and accounting records stay local by default. ML Kit recognition and deterministic parsing run on the device. When a scan has low confidence, Ledgerly presents a separate cloud retry action and explains that only the recognized receipt text—not the image—is sent. No extracted transaction enters SQLite until the user selects **Confirm & save**.
