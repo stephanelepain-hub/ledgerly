@@ -242,6 +242,12 @@ export function extractReceiptLineItems(lines: string[], visualRowLines?: string
     const name = rawName
       .replace(/^0(?=\p{L})/u, "O")
       .replace(/^[-*•\d\s]+/, "")
+      // Strip a price still attached to the description. When a till prints the
+      // article count hard against the currency ("12,87 €1") the inline price
+      // pattern cannot claim it, so the quantity line below supplies the total
+      // and the raw row keeps its price text, e.g.
+      // "CAFE MOULU EXCELL 250G 12,87 €1".
+      .replace(/\s*\d{1,3}(?:[ ,]\d{3})*[.,]\d{2}\s*(?:EUR|EURO|[€$£]|e)?\s*\d*\s*$/i, "")
       .trim();
     // A product name needs at least two letters and some substance. Stray OCR
     // fragments such as "|x" (a misread "1x") otherwise became cart entries,

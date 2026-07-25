@@ -356,6 +356,28 @@ describe("real ALDI scan captured 2026-07-25", () => {
   });
 });
 
+describe("two-section ALDI rescan captured 2026-07-25", () => {
+  it("keeps the price out of the description when the article count hugs the currency", () => {
+    // Real row from the diagnostic: the count "1" sits hard against "\u20ac", so the
+    // inline price pattern cannot claim it and the quantity line below supplies
+    // the total. The description must not keep the price text.
+    const result = parseReceiptText("MARCHE\nCAFE MOULU EXCELL 250G 12,87 \u20ac1\n3 x 4,29\n\u00c0 PAYER 12,87 \u20ac");
+
+    expect(result.lineItems.map((item) => [item.name, item.quantity, item.lineTotalMinor])).toEqual([
+      ["CAFE MOULU EXCELL 250G", 3, 1_287],
+    ]);
+  });
+
+  it("reads the receipt date from the footer section of a two-part capture", () => {
+    const result = parseReceiptText(
+      "ALDI\nBANANES BIO 3,10\n\u00c0 PAYER 3,10 \u20ac\nOU77 101 005238 0160 16/07/2026 16:01:57\nle 16/07/26 a 16:01:46",
+    );
+
+    expect(result.date).toBe("2026-07-16");
+    expect(result.warnings).not.toContain("No date was found on the receipt \u2014 set the correct date below.");
+  });
+});
+
 describe("duplicate receipt detection", () => {
   const ledger = [
     transaction({ id: "aldi", amountMinor: 1_482, date: "2026-03-12", merchant: "ALDI" }),
