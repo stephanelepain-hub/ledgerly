@@ -26,6 +26,7 @@ import {
   updateReceiptDraft,
 } from "@/lib/receipt-draft-store";
 import { persistReceiptImage } from "@/lib/receipt-storage";
+import { shareLatestReceiptOcrDiagnostic } from "@/lib/receipt-debug";
 import {
   HIGH_CONFIDENCE_THRESHOLD,
   type ReceiptExtraction,
@@ -98,6 +99,17 @@ export default function ReceiptReviewScreen() {
       item.id,
       item.lineTotalMinor ? (item.lineTotalMinor / 100).toFixed(2) : "",
     ])));
+  };
+
+  const shareDiagnostic = async () => {
+    try {
+      await shareLatestReceiptOcrDiagnostic();
+    } catch (error) {
+      Alert.alert(
+        "Diagnostic unavailable",
+        error instanceof Error ? error.message : "The OCR diagnostic could not be shared.",
+      );
+    }
   };
 
   const commitPriceDraft = (id: string) => {
@@ -364,11 +376,20 @@ export default function ReceiptReviewScreen() {
             {lineItems.length === 0 && (
               <View style={styles.emptyCartCopy}>
                 <Text style={[styles.emptyCartMessage, { color: colors.muted }]}>No product lines could be matched with prices. Add an item manually.</Text>
-                <Text style={[styles.diagnosticMessage, { color: colors.primary }]}>A text-only OCR diagnostic was saved locally for connected-device troubleshooting.</Text>
+                <Text style={[styles.diagnosticMessage, { color: colors.primary }]}>A text-only OCR diagnostic was saved on this device. Use &quot;Share OCR diagnostic&quot; below to send it for troubleshooting.</Text>
               </View>
             )}
             <View style={styles.cartFooter}>
               <Pressable onPress={addLineItem} style={({ pressed }) => [styles.addItem, pressed && styles.pressed]}><MaterialIcons name="add" size={18} color={colors.primary} /><Text style={[styles.addItemText, { color: colors.primary }]}>Add item</Text></Pressable>
+              <Pressable
+                onPress={() => void shareDiagnostic()}
+                accessibilityLabel="Share OCR diagnostic"
+                accessibilityHint="Shares a text-only recognition report for this scan. Receipt images are not included."
+                style={({ pressed }) => [styles.addItem, pressed && styles.pressed]}
+              >
+                <MaterialIcons name="bug-report" size={16} color={colors.muted} />
+                <Text style={[styles.addItemText, { color: colors.muted }]}>Share OCR diagnostic</Text>
+              </Pressable>
             </View>
           </View>
 
@@ -487,7 +508,7 @@ const styles = StyleSheet.create({
   emptyCartCopy: { gap: 5, paddingTop: 4 },
   emptyCartMessage: { fontSize: 12, lineHeight: 17 },
   diagnosticMessage: { fontSize: 10, lineHeight: 15, fontWeight: "700" },
-  cartFooter: { paddingTop: 2, flexDirection: "row", alignItems: "center" },
+  cartFooter: { paddingTop: 2, flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 10 },
   addItem: { minHeight: 34, flexDirection: "row", alignItems: "center", gap: 4 },
   addItemText: { fontSize: 12, lineHeight: 17, fontWeight: "800" },
   warningList: { gap: 6 },
