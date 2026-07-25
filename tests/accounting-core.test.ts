@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { calculateSummary } from "../lib/db";
+import { calculateSummary, findDuplicateTransaction } from "../lib/db";
 import {
   HIGH_CONFIDENCE_THRESHOLD,
   mergeReceiptSections,
@@ -277,6 +277,35 @@ describe("receipt parser", () => {
     expect(result.overallConfidence).toBeLessThan(HIGH_CONFIDENCE_THRESHOLD);
     expect(result.warnings).toContain("No reliable total was found.");
     expect(result.warnings).toContain("Check the receipt date.");
+  });
+});
+
+describe("duplicate receipt detection", () => {
+  const ledger = [
+    transaction({ id: "aldi", amountMinor: 1_482, date: "2026-03-12", merchant: "ALDI" }),
+    transaction({ id: "other-day", amountMinor: 1_482, date: "2026-03-13", merchant: "ALDI" }),
+    transaction({ id: "income", type: "income", amountMinor: 1_482, date: "2026-03-12", merchant: "Refund" }),
+  ];
+
+  it("flags a receipt re-scanned with the same date and total", () => {
+    const hit = findDuplicateTransaction(ledger, { amountMinor: 1_482, date: "2026-03-12" });
+    expect(hit?.id).toBe("aldi");
+  });
+
+  it("ignores a different day, a different total, and income", () => {
+    expect(findDuplicateTransaction(ledger, { amountMinor: 1_482, date: "2026-03-14" })).toBeUndefined();
+    expect(findDuplicateTransaction(ledger, { amountMinor: 1_483, date: "2026-03-12" })).toBeUndefined();
+    const incomeOnly = [transaction({ id: "i", type: "income", amountMinor: 500, date: "2026-03-12" })];
+    expect(findDuplicateTransaction(incomeOnly, { amountMinor: 500, date: "2026-03-12" })).toBeUndefined();
+  });
+
+  it("never flags without a usable amount or date", () => {
+    expect(findDuplicateTransaction(ledger, { amountMinor: null, date: "2026-03-12" })).toBeUndefined();
+    expect(findDuplicateTransaction(ledger, { amountMinor: 1_482, date: "12/03/2026" })).toBeUndefined();
+  });
+
+  it("excludes the record being edited so it cannot flag itself", () => {
+    expect(findDuplicateTransaction(ledger, { amountMinor: 1_482, date: "2026-03-12", excludeId: "aldi" })).toBeUndefined();
   });
 });
 

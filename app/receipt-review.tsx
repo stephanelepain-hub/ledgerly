@@ -33,7 +33,8 @@ import {
 } from "@/lib/receipt-parser";
 import { hasConfiguredCloudRetryEndpoint } from "@/constants/oauth";
 import { trpc } from "@/lib/trpc";
-import { createId, formatMoney, parseAmountToMinor, todayIsoDate, type ReceiptLineItem } from "@/lib/types";
+import { createId, formatLongDate, formatMoney, parseAmountToMinor, todayIsoDate, type ReceiptLineItem } from "@/lib/types";
+import { findDuplicateTransaction } from "@/lib/db";
 
 export default function ReceiptReviewScreen() {
   const colors = useColors();
@@ -43,7 +44,7 @@ export default function ReceiptReviewScreen() {
   // removed, before the modal finished dismissing.
   const [draft] = useState(() => (draftId ? getReceiptDraft(draftId) : null));
   const initial = draft?.extraction;
-  const { categories, upsertTransaction } = useAccounting();
+  const { categories, transactions, upsertTransaction } = useAccounting();
   const [amount, setAmount] = useState(
     initial?.amountMinor ? (initial.amountMinor / 100).toFixed(2) : "",
   );
@@ -57,6 +58,8 @@ export default function ReceiptReviewScreen() {
   );
   const [isSaving, setIsSaving] = useState(false);
   const [saved, setSaved] = useState(false);
+  // Set once the user has consciously chosen to keep a flagged duplicate.
+  const duplicateAcknowledged = useRef(false);
   // React state updates are asynchronous, so the button's `disabled` prop
   // cannot stop a fast double tap. This synchronous guard can.
   const saveGuard = useRef(false);
@@ -77,6 +80,10 @@ export default function ReceiptReviewScreen() {
 
   const cloudRetry = trpc.receipt.extractFromText.useMutation();
   const amountMinor = useMemo(() => parseAmountToMinor(amount), [amount]);
+  const duplicate = useMemo(
+    () => findDuplicateTransaction(transactions, { amountMinor, date }),
+    [transactions, amountMinor, date],
+  );
   const displayedPreTaxMinor = preTaxMinor ?? (
     amountMinor && taxMinor && amountMinor > taxMinor ? amountMinor - taxMinor : null
   );
@@ -208,6 +215,27 @@ export default function ReceiptReviewScreen() {
     }
 
     saveGuard.current = true;
+    // Warn before a re-scanned receipt is counted twice. This only warns:
+    // the user can still keep it, because two genuine purchases can coincide.
+    if (duplicate && !duplicateAcknowledged.current) {
+      Alert.alert(
+        "You have already saved this one",
+        `${duplicate.merchant.trim() || "A receipt"} for ${formatMoney(duplicate.amountMinor)} on ${formatLongDate(duplicate.date)} is already in your ledger. Saving it again will count it twice in your totals.`,
+        [
+          { text: "Cancel", style: "cancel" },
+          {
+            text: "Save anyway",
+            style: "destructive",
+            onPress: () => {
+              duplicateAcknowledged.current = true;
+              void confirmAndSave();
+            },
+          },
+        ],
+      );
+      return;
+    }
+
     setIsSaving(true);
     try {
       // Copy the receipt image out of the volatile camera/picker cache before
@@ -330,6 +358,18 @@ export default function ReceiptReviewScreen() {
               </View>
             )}
           </View>
+
+          {!!duplicate && (
+            <View style={[styles.warningCard, { borderColor: colors.warning, backgroundColor: `${colors.warning}12` }]}>
+              <MaterialIcons name="content-copy" size={20} color={colors.warning} />
+              <View style={styles.warningCopy}>
+                <Text style={[styles.warningTitle, { color: colors.text }]}>You have already saved this one</Text>
+                <Text style={[styles.warningBody, { color: colors.muted }]}>
+                  {`${duplicate.merchant.trim() || "A receipt"} for ${formatMoney(duplicate.amountMinor)} on ${formatLongDate(duplicate.date)} is already in your ledger. Saving it again would count it twice.`}
+                </Text>
+              </View>
+            </View>
+          )}
 
           {!!draft.error && (
             <View style={[styles.warningCard, { borderColor: colors.warning, backgroundColor: `${colors.warning}12` }]}>
