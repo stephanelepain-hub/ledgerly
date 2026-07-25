@@ -64,6 +64,10 @@ const config: ExpoConfig = {
     edgeToEdgeEnabled: true,
     predictiveBackGestureEnabled: false,
     package: env.androidPackage,
+    // Source of truth for the Play version code. `android/` is gitignored and
+    // regenerable, so this must be bumped here for every Play upload; keep
+    // android/app/build.gradle in step until a prebuild regenerates it.
+    versionCode: 2,
     permissions: ["CAMERA"],
     intentFilters: [
       {
