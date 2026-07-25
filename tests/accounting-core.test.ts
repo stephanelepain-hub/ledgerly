@@ -601,3 +601,70 @@ describe("amount input", () => {
     expect(parseAmountToMinor("not an amount")).toBeNull();
   });
 });
+
+describe("a receipt whose printed dates disagree", () => {
+  // Real Samsung scan of the 16 July ALDI receipt: the till prints its date
+  // twice and OCR read the copies differently, misreading the 7 as a 1. Taking
+  // the first match reported January with 0.88 confidence and no warning —
+  // confidently wrong. Both readings must be surfaced instead.
+  const footer = [
+    "ALDI",
+    "BANANES BIO 3,10",
+    "\u00c0 PAYER 3,10 \u20ac",
+    "OU77 101 005238 0160 16/01/2026 16:01:57",
+    "le 16/07/26 a 16:01:46",
+  ].join("\n");
+
+  it("prefers the reading nearest the scan when the copies tie", () => {
+    const result = parseReceiptText(footer);
+
+    expect(result.date).toBe("2026-07-16");
+  });
+
+  it("lists every disagreeing reading and drops confidence below review", () => {
+    const result = parseReceiptText(footer);
+
+    expect(result.conflictingDates).toEqual(["2026-07-16", "2026-01-16"]);
+    expect(result.fieldConfidence.date).toBeLessThan(0.72);
+    expect(
+      result.warnings.some(
+        (w) =>
+          w.startsWith("This receipt shows more than one date") &&
+          w.includes("July 16, 2026") &&
+          w.includes("January 16, 2026"),
+      ),
+    ).toBe(true);
+  });
+
+  it("stays confident and quiet when the printed copies agree", () => {
+    const result = parseReceiptText(
+      [
+        "ALDI",
+        "BANANES BIO 3,10",
+        "\u00c0 PAYER 3,10 \u20ac",
+        "OU77 101 005238 0160 16/07/2026 16:01:57",
+        "le 16/07/26 a 16:01:46",
+      ].join("\n"),
+    );
+
+    expect(result.date).toBe("2026-07-16");
+    expect(result.conflictingDates).toEqual([]);
+    expect(result.warnings.some((w) => w.includes("more than one date"))).toBe(false);
+  });
+
+  it("follows the majority of the copies rather than the first one read", () => {
+    const result = parseReceiptText(
+      [
+        "ALDI",
+        "PAIN 1,20",
+        "\u00c0 PAYER 1,20 \u20ac",
+        "16/01/2026 09:12:04",
+        "le 16/07/26 a 09:12:01",
+        "TICKET DU 16/01/2026",
+      ].join("\n"),
+    );
+
+    expect(result.date).toBe("2026-01-16");
+    expect(result.conflictingDates).toEqual(["2026-01-16", "2026-07-16"]);
+  });
+});

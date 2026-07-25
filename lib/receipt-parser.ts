@@ -1,4 +1,4 @@
-import { createId, formatMoney, todayIsoDate, type ReceiptLineItem } from "@/lib/types";
+import { createId, formatLongDate, formatMoney, todayIsoDate, type ReceiptLineItem } from "@/lib/types";
 import type { ReceiptOcrLine } from "@/lib/receipt-ocr";
 
 export interface ReceiptFieldConfidence {
@@ -28,6 +28,11 @@ export interface ReceiptExtraction {
    * to detect a scan that only covers part of a long receipt.
    */
   declaredItemCount?: number | null;
+  /**
+   * Every distinct date read from the receipt when the copies disagreed, best
+   * supported first. Empty when the date was unambiguous.
+   */
+  conflictingDates?: string[];
 }
 
 interface AmountCandidate {
@@ -512,18 +517,23 @@ function isoDate(year: number, month: number, day: number): string | null {
   return `${year}-${String(month).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
 }
 
-function extractDate(text: string): { value: string; confidence: number } {
-  const yearFirst = text.match(/\b(20\d{2})[\-/.](0?[1-9]|1[0-2])[\-/.](0?[1-9]|[12]\d|3[01])\b/);
-  if (yearFirst) {
-    const value = isoDate(Number(yearFirst[1]), Number(yearFirst[2]), Number(yearFirst[3]));
-    if (value) return { value, confidence: 0.94 };
+/** Every date the recognised text contains, in reading order. */
+function collectDateCandidates(text: string): { value: string; confidence: number }[] {
+  const found: { value: string; confidence: number }[] = [];
+
+  for (const match of text.matchAll(
+    /\b(20\d{2})[\-/.](0?[1-9]|1[0-2])[\-/.](0?[1-9]|[12]\d|3[01])\b/g,
+  )) {
+    const value = isoDate(Number(match[1]), Number(match[2]), Number(match[3]));
+    if (value) found.push({ value, confidence: 0.94 });
   }
 
-  const numeric = text.match(/\b(0?[1-9]|[12]\d|3[01])[\-/.](0?[1-9]|[12]\d|3[01])[\-/.](20\d{2}|\d{2})\b/);
-  if (numeric) {
-    const first = Number(numeric[1]);
-    const second = Number(numeric[2]);
-    const rawYear = Number(numeric[3]);
+  for (const match of text.matchAll(
+    /\b(0?[1-9]|[12]\d|3[01])[\-/.](0?[1-9]|[12]\d|3[01])[\-/.](20\d{2}|\d{2})\b/g,
+  )) {
+    const first = Number(match[1]);
+    const second = Number(match[2]);
+    const rawYear = Number(match[3]);
     const year = rawYear < 100 ? 2000 + rawYear : rawYear;
     // European receipts print day-first. Treat ambiguous dates as DD/MM and
     // fall back to MM/DD only when the second value cannot be a month.
@@ -532,23 +542,84 @@ function extractDate(text: string): { value: string; confidence: number } {
     const month = monthFirstOnly ? first : second;
     const unambiguous = first > 12 || second > 12;
     const value = isoDate(year, month, day);
-    if (value) return { value, confidence: unambiguous ? 0.88 : 0.68 };
+    if (value) found.push({ value, confidence: unambiguous ? 0.88 : 0.68 });
   }
 
   const monthNames =
     "jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|jun(?:e)?|jul(?:y)?|aug(?:ust)?|sep(?:tember)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?";
-  const named = text.match(
-    new RegExp(`\\b(${monthNames})[\\s.\\-/]+(\\d{1,2})(?:st|nd|rd|th)?[,]?[\\s.\\-/]+(20\\d{2}|\\d{2})\\b`, "i"),
-  );
-  if (named) {
-    const monthToken = named[1].slice(0, 3).toLocaleLowerCase();
+  for (const match of text.matchAll(
+    new RegExp(
+      `\\b(${monthNames})[\\s.\\-/]+(\\d{1,2})(?:st|nd|rd|th)?[,]?[\\s.\\-/]+(20\\d{2}|\\d{2})\\b`,
+      "gi",
+    ),
+  )) {
+    const monthToken = match[1].slice(0, 3).toLocaleLowerCase();
     const month = ["jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec"].indexOf(monthToken) + 1;
-    const rawYear = Number(named[3]);
-    const value = isoDate(rawYear < 100 ? 2000 + rawYear : rawYear, month, Number(named[2]));
-    if (value) return { value, confidence: 0.92 };
+    const rawYear = Number(match[3]);
+    const value = isoDate(rawYear < 100 ? 2000 + rawYear : rawYear, month, Number(match[2]));
+    if (value) found.push({ value, confidence: 0.92 });
   }
 
-  return { value: todayIsoDate(), confidence: 0.08 };
+  return found;
+}
+
+function daysBetween(a: string, b: string): number {
+  const left = Date.parse(`${a}T12:00:00Z`);
+  const right = Date.parse(`${b}T12:00:00Z`);
+  if (!Number.isFinite(left) || !Number.isFinite(right)) return Number.POSITIVE_INFINITY;
+  return Math.abs(left - right) / 86_400_000;
+}
+
+/**
+ * Resolves the receipt date across every date the text contains.
+ *
+ * A till often prints its date more than once, and OCR can read the copies
+ * differently: one real scan produced both "16/01/2026" and "16/07/26" for the
+ * same purchase because a 7 was misread as a 1. Taking the first match meant
+ * reporting January with 0.88 confidence and no warning — confidently wrong,
+ * which is worse than uncertain.
+ *
+ * Conflicting copies are therefore surfaced: the best-supported value is
+ * pre-filled, confidence drops below the review threshold, and the caller
+ * warns with both readings so the user decides.
+ */
+function extractDate(text: string): {
+  value: string;
+  confidence: number;
+  conflicting: string[];
+} {
+  const candidates = collectDateCandidates(text);
+  if (!candidates.length) {
+    return { value: todayIsoDate(), confidence: 0.08, conflicting: [] };
+  }
+
+  const tally = new Map<string, { votes: number; confidence: number }>();
+  for (const candidate of candidates) {
+    const entry = tally.get(candidate.value) ?? { votes: 0, confidence: 0 };
+    entry.votes += 1;
+    entry.confidence = Math.max(entry.confidence, candidate.confidence);
+    tally.set(candidate.value, entry);
+  }
+
+  const distinct = [...tally.entries()];
+  if (distinct.length === 1) {
+    return { value: distinct[0][0], confidence: distinct[0][1].confidence, conflicting: [] };
+  }
+
+  // Most corroborated wins. A receipt is normally scanned soon after the
+  // purchase, so break a tie toward the reading nearest the scan date; the
+  // warning still asks the user to confirm, so this is only a starting point.
+  const today = todayIsoDate();
+  distinct.sort((a, b) => {
+    if (b[1].votes !== a[1].votes) return b[1].votes - a[1].votes;
+    return daysBetween(a[0], today) - daysBetween(b[0], today);
+  });
+
+  return {
+    value: distinct[0][0],
+    confidence: 0.5,
+    conflicting: distinct.map(([value]) => value),
+  };
 }
 
 function isMerchantNoise(line: string): boolean {
@@ -752,6 +823,12 @@ export function parseReceiptText(
     warnings.push(
       "No date found. The bottom of the receipt, where the date and payment details are printed, may not be in the scan. Add a section covering it, or set the date below.",
     );
+  } else if (date.conflicting.length > 1) {
+    warnings.push(
+      `This receipt shows more than one date (${date.conflicting
+        .map((value) => formatLongDate(value))
+        .join(" and ")}). ${formatLongDate(date.value)} was used — confirm it is right.`,
+    );
   } else if (fieldConfidence.date < 0.72) {
     warnings.push("Check the receipt date.");
   }
@@ -800,5 +877,6 @@ export function parseReceiptText(
     taxMinor,
     lineItems,
     declaredItemCount,
+    conflictingDates: date.conflicting,
   };
 }
