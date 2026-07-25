@@ -277,7 +277,7 @@ describe("receipt parser", () => {
     expect(result.amountMinor).toBeNull();
     expect(result.overallConfidence).toBeLessThan(HIGH_CONFIDENCE_THRESHOLD);
     expect(result.warnings).toContain("No reliable total was found.");
-    expect(result.warnings).toContain("No date was found on the receipt — set the correct date below.");
+    expect(result.warnings.some((w) => w.startsWith("No date found."))).toBe(true);
   });
 });
 
@@ -352,7 +352,7 @@ describe("real ALDI scan captured 2026-07-25", () => {
   it("says plainly when the receipt carried no readable date", () => {
     const result = parseReceiptText(receipt);
     expect(result.date).toBe(todayIsoDate());
-    expect(result.warnings).toContain("No date was found on the receipt \u2014 set the correct date below.");
+    expect(result.warnings.some((w) => w.startsWith("No date found."))).toBe(true);
   });
 });
 
@@ -374,7 +374,39 @@ describe("two-section ALDI rescan captured 2026-07-25", () => {
     );
 
     expect(result.date).toBe("2026-07-16");
-    expect(result.warnings).not.toContain("No date was found on the receipt \u2014 set the correct date below.");
+    expect(result.warnings.some((w) => w.startsWith("No date found."))).toBe(false);
+  });
+});
+
+describe("incomplete capture detection", () => {
+  // Scan A of the real ALDI receipt stopped before the payment/fiscal block,
+  // losing both printed dates and several products, while still showing the
+  // receipt's own declared article count.
+  it("warns when fewer items are found than the receipt declares", () => {
+    const result = parseReceiptText(
+      "ALDI\nNECTARINES BLANCHES VRAC 2,74\nBRL IS OIGNONS 200G 1,69\nNombre de lignes d'articles 9\n\u00c0 PAYER 38,24 \u20ac",
+    );
+
+    expect(result.declaredItemCount).toBe(9);
+    expect(result.lineItems).toHaveLength(2);
+    expect(result.warnings).toContain(
+      "This receipt lists 9 items but 2 were detected. Check the scan covers the whole receipt.",
+    );
+  });
+
+  it("stays quiet when the detected items match the declared count", () => {
+    const result = parseReceiptText(
+      "ALDI\n16/07/2026\nNECTARINES 2,74\nOIGNONS 1,69\nNombre de lignes d'articles 2\n\u00c0 PAYER 4,43 \u20ac",
+    );
+
+    expect(result.declaredItemCount).toBe(2);
+    expect(result.warnings.some((w) => w.includes("were detected"))).toBe(false);
+  });
+
+  it("points at the uncaptured foot of the receipt when no date was read", () => {
+    const result = parseReceiptText("ALDI\nNECTARINES 2,74\n\u00c0 PAYER 2,74 \u20ac");
+
+    expect(result.warnings.some((w) => w.startsWith("No date found."))).toBe(true);
   });
 });
 

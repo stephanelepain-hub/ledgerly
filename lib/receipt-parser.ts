@@ -23,6 +23,11 @@ export interface ReceiptExtraction {
   /** TVA/VAT included in the total, when it can be identified locally. */
   taxMinor?: number | null;
   lineItems: ReceiptLineItem[];
+  /**
+   * The item count the receipt states about itself, when it prints one. Used
+   * to detect a scan that only covers part of a long receipt.
+   */
+  declaredItemCount?: number | null;
 }
 
 interface AmountCandidate {
@@ -623,6 +628,31 @@ function extractMerchantAddress(lines: string[], merchant: string): string | nul
   return cleaned.length >= 6 ? cleaned : null;
 }
 
+/**
+ * Reads the article count a till prints about itself, e.g. the French
+ * "Nombre de lignes d'articles 9". Comparing it with the number of items
+ * actually recognised is the cheapest reliable way to notice that a capture
+ * missed part of a long receipt.
+ */
+function extractDeclaredItemCount(lines: string[]): number | null {
+  const patterns = [
+    /nombre\s+de\s+lignes?\s+d.{0,2}articles?\s*:?\s*(\d{1,3})\b/i,
+    /nb\.?\s*(?:d.{0,2})?articles?\s*:?\s*(\d{1,3})\b/i,
+    /\b(\d{1,3})\s+articles?\b/i,
+    /\bitem\s*count\s*:?\s*(\d{1,3})\b/i,
+    /\b(\d{1,3})\s+items?\s+(?:sold|purchased|total)\b/i,
+  ];
+  for (const line of lines) {
+    for (const pattern of patterns) {
+      const match = pattern.exec(line);
+      if (!match) continue;
+      const count = Number(match[1]);
+      if (Number.isFinite(count) && count > 0 && count < 300) return count;
+    }
+  }
+  return null;
+}
+
 function extractCategory(text: string, merchant: string): { value: string; confidence: number } {
   const haystack = `${merchant}\n${text}`.toLocaleLowerCase();
   let bestId = "other";
@@ -673,6 +703,7 @@ export function parseReceiptText(
   const preTaxMinor = extractPreTax(analysisLines);
   const taxMinor = extractTax(analysisLines);
   const lineItems = extractReceiptLineItems(lines, visualLines);
+  const declaredItemCount = extractDeclaredItemCount(analysisLines);
   const fieldConfidence: ReceiptFieldConfidence = {
     amount: amount.confidence,
     date: date.confidence,
@@ -689,13 +720,23 @@ export function parseReceiptText(
 
   if (!amount.value) warnings.push("No reliable total was found.");
   else if (fieldConfidence.amount < 0.72) warnings.push("Check the total amount.");
-  // A very low score means no date was printed in the recognised text at all,
-  // so the field silently falls back to today. Say so plainly instead of
-  // implying the extracted date merely needs a check.
+  // A very low score means no date was printed in the recognised text at all.
+  // Tills almost always print one, near the payment details at the foot of the
+  // receipt, so the usual cause is a capture that stopped short of the bottom.
   if (fieldConfidence.date < 0.2) {
-    warnings.push("No date was found on the receipt — set the correct date below.");
+    warnings.push(
+      "No date found. The bottom of the receipt, where the date and payment details are printed, may not be in the scan. Add a section covering it, or set the date below.",
+    );
   } else if (fieldConfidence.date < 0.72) {
     warnings.push("Check the receipt date.");
+  }
+
+  // The receipt's own article count is authoritative about how many products
+  // it lists, so a shortfall means the scan or the parse missed some.
+  if (declaredItemCount !== null && lineItems.length !== declaredItemCount) {
+    warnings.push(
+      `This receipt lists ${declaredItemCount} items but ${lineItems.length} were detected. Check the scan covers the whole receipt.`,
+    );
   }
   if (fieldConfidence.merchant < 0.7) warnings.push("Check the merchant name.");
   if (category.value === "other" || fieldConfidence.category < 0.65) {
@@ -717,5 +758,6 @@ export function parseReceiptText(
     preTaxMinor,
     taxMinor,
     lineItems,
+    declaredItemCount,
   };
 }
