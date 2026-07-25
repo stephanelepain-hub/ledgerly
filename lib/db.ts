@@ -312,6 +312,31 @@ export async function deleteTransaction(db: SQLiteDatabase, id: string): Promise
   await db.runAsync("DELETE FROM transactions WHERE id = ?", id);
 }
 
+/**
+ * Finds an existing expense that looks like the same receipt. Same calendar
+ * date plus an identical total is a strong signal that a receipt was scanned
+ * twice; two separate purchases matching to the cent on one day is rare.
+ *
+ * Merchant is deliberately not part of the test, because OCR reads the shop
+ * name inconsistently and a mismatch there would let real duplicates through.
+ * This only ever warns, so the occasional genuine same-day, same-total pair
+ * can still be saved.
+ */
+export function findDuplicateTransaction(
+  transactions: Transaction[],
+  candidate: { amountMinor: number | null; date: string; excludeId?: string },
+): Transaction | undefined {
+  if (!candidate.amountMinor || candidate.amountMinor <= 0) return undefined;
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(candidate.date)) return undefined;
+  return transactions.find(
+    (transaction) =>
+      transaction.id !== candidate.excludeId &&
+      transaction.type === "expense" &&
+      transaction.amountMinor === candidate.amountMinor &&
+      transaction.date === candidate.date,
+  );
+}
+
 export function calculateSummary(
   transactions: Transaction[],
   period: SummaryPeriod,
