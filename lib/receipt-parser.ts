@@ -247,7 +247,23 @@ export function extractReceiptLineItems(lines: string[], visualRowLines?: string
     // fragments such as "|x" (a misread "1x") otherwise became cart entries,
     // borrowing the price of the line next to them.
     const letterCount = (name.match(/\p{L}/gu) ?? []).length;
-    if (!lineTotalMinor || lineTotalMinor > 1_000_000 || isItemNoise(name) || letterCount < 2 || name.length < 3 || name.length > 100) return;
+    // A weight/unit-price continuation line such as "0,686 kg x 3.99 €/kg"
+    // describes the product above it; it is not a product of its own.
+    const isMeasurementLine =
+      /^\d*[.,]?\d*\s*(?:kg|g|l|ml|cl)\b/i.test(name) ||
+      /(?:€|eur|euro)\s*\/\s*(?:kg|g|l|ml|cl)\b/i.test(name) ||
+      /\b(?:kg|g|l|ml|cl)\s*[x×]\s*\d/i.test(name);
+    if (
+      !lineTotalMinor ||
+      lineTotalMinor > 1_000_000 ||
+      isItemNoise(name) ||
+      isMeasurementLine ||
+      letterCount < 2 ||
+      name.length < 3 ||
+      name.length > 100
+    ) {
+      return;
+    }
     const key = `${normalizedLine(name)}|${lineTotalMinor}`;
     if (seen.has(key)) return;
     // Same price plus a nearly identical name is the signature of the same
@@ -368,15 +384,40 @@ function amountLabelConfidence(line: string): number {
   return 0.46;
 }
 
-function extractPreTax(lines: string[]): number | null {
+/**
+ * Reads a labelled total, preferring a strong label that carries its value on
+ * the same row.
+ *
+ * French receipts also print a per-VAT-rate breakdown table whose columns are
+ * headed by a bare "HT" and "MONTANT TVA". Scanning the flattened OCR text
+ * first matched those per-rate subtotals (HT 25,55 of 34,95) instead of the
+ * receipt's own "TOTAL HT 34,95" row, so the summary understated both figures.
+ */
+function extractLabelledTotal(
+  lines: string[],
+  strongLabel: RegExp,
+  weakLabel: RegExp,
+): number | null {
   const amountPattern = /(?:[$€£]\s*)?(\d{1,3}(?:[ ,]\d{3})*(?:[.,]\d{2})|\d+[.,]\d{2})\b/g;
-  const isPreTaxLabel = /\b(?:total\s*)?h\.?[ti1]\.?\b|hors\s*taxe?/i;
 
-  for (let index = 0; index < lines.length; index += 1) {
-    if (!isPreTaxLabel.test(lines[index])) continue;
-    const values = [...lines[index].matchAll(amountPattern)]
+  const valuesOn = (line: string): number[] =>
+    [...line.matchAll(amountPattern)]
       .map((match) => normalizeAmount(match[0]))
       .filter((value): value is number => value !== null);
+
+  // Pass 1: an unambiguous label with its own value, which is what the visual
+  // row rebuild reconstructs from the description and price columns.
+  for (const line of lines) {
+    if (!strongLabel.test(line)) continue;
+    const values = valuesOn(line);
+    if (values.length) return values.at(-1) ?? null;
+  }
+
+  // Pass 2: any matching label, taking a value from the row or the bare price
+  // printed immediately after it.
+  for (let index = 0; index < lines.length; index += 1) {
+    if (!weakLabel.test(lines[index])) continue;
+    const values = valuesOn(lines[index]);
     if (values.length) return values.at(-1) ?? null;
 
     const next = lines[index + 1] ?? "";
@@ -387,23 +428,20 @@ function extractPreTax(lines: string[]): number | null {
   return null;
 }
 
+function extractPreTax(lines: string[]): number | null {
+  return extractLabelledTotal(
+    lines,
+    /\btotal\s*h\.?[ti1]\.?\b|\bhors\s*taxe?\b/i,
+    /\b(?:total\s*)?h\.?[ti1]\.?\b|hors\s*taxe?/i,
+  );
+}
+
 function extractTax(lines: string[]): number | null {
-  const amountPattern = /(?:[$€£]\s*)?(\d{1,3}(?:[ ,]\d{3})*(?:[.,]\d{2})|\d+[.,]\d{2})\b/g;
-  const isTaxLabel = /\b(?:tva|vat|taxe?s?)\b/i;
-
-  for (let index = 0; index < lines.length; index += 1) {
-    if (!isTaxLabel.test(lines[index])) continue;
-    const values = [...lines[index].matchAll(amountPattern)]
-      .map((match) => normalizeAmount(match[0]))
-      .filter((value): value is number => value !== null);
-    if (values.length) return values.at(-1) ?? null;
-
-    const next = lines[index + 1] ?? "";
-    if (!ITEM_NOISE.test(next) && /^\s*(?:[€$£]\s*)?\d+(?:[.,]\d{2})\s*$/u.test(next)) {
-      return normalizeAmount(next);
-    }
-  }
-  return null;
+  return extractLabelledTotal(
+    lines,
+    /\btotal\s*(?:tva|vat)\b/i,
+    /\b(?:tva|vat|taxe?s?)\b/i,
+  );
 }
 
 function extractAmount(lines: string[]): { value: number | null; confidence: number } {
@@ -523,6 +561,10 @@ function extractMerchant(lines: string[]): { value: string; confidence: number }
     if (tokens.length < 3 || !tokens.every((token) => token.length <= 2)) return value;
     return tokens.join("");
   };
+  // A logo can also rebuild as "ALD I" or "Ald I", which the rule above will
+  // not touch. Known shop names are distinctive enough to match with every
+  // space removed.
+  const withoutSpaces = (value: string): string => value.replace(/\s+/g, "");
 
   const knownMerchants: { pattern: RegExp; name: string }[] = [
     { pattern: /\baldi\b/i, name: "ALDI" },
@@ -535,7 +577,10 @@ function extractMerchant(lines: string[]): { value: string; confidence: number }
   for (const line of lines.slice(0, 14)) {
     const collapsed = collapseSpacedGlyphs(line);
     const known = knownMerchants.find(
-      (merchant) => merchant.pattern.test(line) || merchant.pattern.test(collapsed),
+      (merchant) =>
+        merchant.pattern.test(line) ||
+        merchant.pattern.test(collapsed) ||
+        merchant.pattern.test(withoutSpaces(line)),
     );
     if (known) return { value: known.name, confidence: 0.96 };
   }
@@ -638,7 +683,14 @@ export function parseReceiptText(
 
   if (!amount.value) warnings.push("No reliable total was found.");
   else if (fieldConfidence.amount < 0.72) warnings.push("Check the total amount.");
-  if (fieldConfidence.date < 0.72) warnings.push("Check the receipt date.");
+  // A very low score means no date was printed in the recognised text at all,
+  // so the field silently falls back to today. Say so plainly instead of
+  // implying the extracted date merely needs a check.
+  if (fieldConfidence.date < 0.2) {
+    warnings.push("No date was found on the receipt — set the correct date below.");
+  } else if (fieldConfidence.date < 0.72) {
+    warnings.push("Check the receipt date.");
+  }
   if (fieldConfidence.merchant < 0.7) warnings.push("Check the merchant name.");
   if (category.value === "other" || fieldConfidence.category < 0.65) {
     warnings.push("Choose the best category.");
