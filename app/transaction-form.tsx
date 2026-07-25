@@ -63,6 +63,9 @@ export default function TransactionFormScreen() {
   // write creating a duplicate transaction.
   const saveGuard = useRef(false);
   const [submitted, setSubmitted] = useState(false);
+  // Guards against a first-paint flash of "Save changes" before the stored
+  // record has populated the fields.
+  const [hydrated, setHydrated] = useState(false);
 
   const receiptUri = first(params.receiptUri) ?? existing?.receiptUri ?? null;
   const ocrText = first(params.ocrText) ?? existing?.ocrText ?? null;
@@ -95,6 +98,7 @@ export default function TransactionFormScreen() {
       setMerchant(existing.merchant);
       setDescription(existing.description);
       setNotes(existing.notes);
+      setHydrated(true);
       return;
     }
     const amountMinor = Number(first(params.amountMinor));
@@ -119,6 +123,21 @@ export default function TransactionFormScreen() {
     [amountMinor, date, categories, categoryId, merchant, description],
   );
   const isValid = Object.values(errors).every((error) => !error);
+  // An already-saved transaction must not offer to save itself again. Only a
+  // real change to a stored field brings the save action back.
+  const isDirty = useMemo(() => {
+    if (!existing) return true;
+    return (
+      type !== existing.type ||
+      amountMinor !== existing.amountMinor ||
+      date !== existing.date ||
+      categoryId !== existing.categoryId ||
+      merchant.trim() !== existing.merchant.trim() ||
+      description.trim() !== existing.description.trim() ||
+      notes.trim() !== existing.notes.trim()
+    );
+  }, [existing, type, amountMinor, date, categoryId, merchant, description, notes]);
+  const showSaveAction = !isEditing || (hydrated && isDirty);
   const selectedCategory = categories.find((category) => category.id === categoryId);
   const possibleDuplicate = useMemo(() => {
     if (!amountMinor || !date) return undefined;
@@ -174,7 +193,7 @@ export default function TransactionFormScreen() {
   };
 
   const requestSave = () => {
-    if (saveGuard.current || isSaving || saved) return;
+    if (saveGuard.current || isSaving || saved || !showSaveAction) return;
     setSubmitted(true);
     if (!isValid || !amountMinor) return;
     const summary = `${type === "expense" ? "Expense" : "Income"} of ${formatMoney(amountMinor)}${
@@ -451,7 +470,7 @@ export default function TransactionFormScreen() {
               <MaterialIcons name="check-circle" size={21} color={colors.primary} />
               <Text style={[styles.savedNoticeText, { color: colors.text }]}>Saved to your ledger</Text>
             </View>
-          ) : (
+          ) : showSaveAction ? (
             <Pressable
               disabled={isSaving}
               onPress={requestSave}
@@ -463,10 +482,19 @@ export default function TransactionFormScreen() {
               ]}
             >
               <MaterialIcons name="check" size={21} color="#FFFFFF" />
-              <Text style={styles.saveText}>{isSaving ? "Saving…" : "Confirm & save"}</Text>
+              <Text style={styles.saveText}>{isSaving ? "Saving…" : isEditing ? "Save changes" : "Confirm & save"}</Text>
             </Pressable>
+          ) : (
+            <View accessibilityRole="summary" style={[styles.savedNotice, { borderColor: colors.border }]}>
+              <MaterialIcons name="check-circle" size={20} color={colors.muted} />
+              <Text style={[styles.savedNoticeText, { color: colors.muted }]}>Saved · no unsaved changes</Text>
+            </View>
           )}
-          {!saved && <Text style={[styles.footerNote, { color: colors.muted }]}>Nothing is saved until you confirm.</Text>}
+          {!saved && showSaveAction && (
+            <Text style={[styles.footerNote, { color: colors.muted }]}>
+              {isEditing ? "Your changes apply when you save." : "Nothing is saved until you confirm."}
+            </Text>
+          )}
         </View>
       </KeyboardAvoidingView>
     </ScreenContainer>
