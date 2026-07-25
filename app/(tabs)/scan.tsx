@@ -134,20 +134,34 @@ export default function ScanScreen() {
     setWorking(true);
     setStatus("Opening Google's on-device document scanner…");
     try {
-      const pages = await launchReceiptDocumentScanner({ pageLimit: 5 });
-      if (pages === null) {
+      const outcome = await launchReceiptDocumentScanner({ pageLimit: 5 });
+
+      if (outcome.status === "unsupported") {
+        // Genuinely impossible on this build/device, so stop offering it.
         setDocScannerAvailable(false);
         setStatus("The document scanner is unavailable on this device — use the manual camera.");
         return;
       }
-      if (!pages.length) {
+      if (outcome.status === "failed") {
+        // Play services delivers the scanner on demand and can fail once while
+        // it downloads. Keep the scanner button so the user can simply retry
+        // instead of being pushed into the manual camera.
+        setStatus("The scanner did not open. Tap Scan receipt to try again.");
+        Alert.alert(
+          "Scanner did not open",
+          `${outcome.reason}\n\nThis is usually temporary while Google Play services finishes preparing the scanner. Try again, or use the manual camera.`,
+        );
+        return;
+      }
+      if (outcome.status === "cancelled") {
         setStatus(sections.length
-          ? "Scan cancelled. Review the captured sections or scan again."
+          ? "Scan cancelled. Review the captured pages or scan again."
           : "Scan cancelled");
         return;
       }
+
       setWorking(false);
-      for (const uri of pages) {
+      for (const uri of outcome.pages) {
         await processSection(uri);
       }
     } catch (error) {

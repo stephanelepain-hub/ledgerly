@@ -208,7 +208,10 @@ export function mergeReceiptSections(sections: string[]): string {
   return mergeSectionLineArrays(sections.map((section) => section.split(/\r?\n/))).join("\n");
 }
 
-const ITEM_NOISE = /\b(sub\s*total|grand\s*total|total|tax|tva|vat|t\.?(?:t\.?)?c\.?|tic|h\.?[ti1]\.?|hors\s*taxe?|toutes?\s+taxes?\s+comprises?|a\s*payer|net\s+a\s+payer|montant\s+du|nombre\s+de\s+lignes?|change|cash|card|c[b8]|visa|mastercard|payment|amount\s*due|balance\s*due|discount|coupon|loyalty|thank\s*you)\b/i;
+// "montant" alone is the French total, and meal-voucher/payment tender lines
+// carry the receipt total too. Both were being banked as shopping items,
+// which double-counted the total inside the cart.
+const ITEM_NOISE = /\b(sub\s*total|sous\s*total|grand\s*total|total|tax|tva|vat|t\.?(?:t\.?)?c\.?|tic|h\.?[ti1]\.?|hors\s*taxe?|toutes?\s+taxes?\s+comprises?|a\s*payer|net\s+a\s+payer|montant|nombre\s+de\s+lignes?|change|cash|card|c[b8]|visa|mastercard|payment|paiement|titre[s]?\s*restaurant|ticket[s]?\s*restaurant|esp[eè]ces|monnaie|rendu|reste\s+a\s+payer|amount\s*due|balance\s*due|discount|remise|coupon|loyalty|thank\s*you)\b/i;
 
 function isItemNoise(value: string): boolean {
   return ITEM_NOISE.test(value.normalize("NFD").replace(/\p{M}/gu, ""));
@@ -240,7 +243,11 @@ export function extractReceiptLineItems(lines: string[], visualRowLines?: string
       .replace(/^0(?=\p{L})/u, "O")
       .replace(/^[-*•\d\s]+/, "")
       .trim();
-    if (!lineTotalMinor || lineTotalMinor > 1_000_000 || isItemNoise(name) || !/[\p{L}]/u.test(name) || name.length > 100) return;
+    // A product name needs at least two letters and some substance. Stray OCR
+    // fragments such as "|x" (a misread "1x") otherwise became cart entries,
+    // borrowing the price of the line next to them.
+    const letterCount = (name.match(/\p{L}/gu) ?? []).length;
+    if (!lineTotalMinor || lineTotalMinor > 1_000_000 || isItemNoise(name) || letterCount < 2 || name.length < 3 || name.length > 100) return;
     const key = `${normalizedLine(name)}|${lineTotalMinor}`;
     if (seen.has(key)) return;
     // Same price plus a nearly identical name is the signature of the same
@@ -508,6 +515,15 @@ function titleCaseMerchant(value: string): string {
 }
 
 function extractMerchant(lines: string[]): { value: string; confidence: number } {
+  // OCR often splits a shop logo into one fragment per glyph, so the row
+  // rebuilds as "A L Di". Collapse a run of very short tokens back together
+  // before matching, but leave normal wording such as "A PAYER" alone.
+  const collapseSpacedGlyphs = (value: string): string => {
+    const tokens = value.trim().split(/\s+/);
+    if (tokens.length < 3 || !tokens.every((token) => token.length <= 2)) return value;
+    return tokens.join("");
+  };
+
   const knownMerchants: { pattern: RegExp; name: string }[] = [
     { pattern: /\baldi\b/i, name: "ALDI" },
     { pattern: /\blidl\b/i, name: "LIDL" },
@@ -517,7 +533,10 @@ function extractMerchant(lines: string[]): { value: string; confidence: number }
     { pattern: /\bauchan\b/i, name: "Auchan" },
   ];
   for (const line of lines.slice(0, 14)) {
-    const known = knownMerchants.find((merchant) => merchant.pattern.test(line));
+    const collapsed = collapseSpacedGlyphs(line);
+    const known = knownMerchants.find(
+      (merchant) => merchant.pattern.test(line) || merchant.pattern.test(collapsed),
+    );
     if (known) return { value: known.name, confidence: 0.96 };
   }
 
@@ -529,6 +548,7 @@ function extractMerchant(lines: string[]): { value: string; confidence: number }
 
   const best = candidates[0];
   if (!best) return { value: "", confidence: 0 };
+  best.line = collapseSpacedGlyphs(best.line);
   const hasBusinessCue = /market|store|restaurant|cafe|pharmacy|shop|mart|foods|fuel|gas|aldi|lidl|carrefour|leclerc|intermarch[eé]|auchan/i.test(best.line);
   const confidence = clamp(0.8 - best.index * 0.055 + (hasBusinessCue ? 0.08 : 0));
   return { value: titleCaseMerchant(best.line), confidence };
