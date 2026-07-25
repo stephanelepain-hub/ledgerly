@@ -410,6 +410,55 @@ describe("incomplete capture detection", () => {
   });
 });
 
+describe("cart reconciliation against the receipt total", () => {
+  // Third real scan of the ALDI receipt: nine items, correct count, but OCR
+  // read 12,87 as 12,67 and 3,58 as 3,53, leaving the cart 25 cents short.
+  it("flags a cart that does not add up to the total", () => {
+    const result = parseReceiptText(
+      [
+        "ALDI",
+        "16/07/2026",
+        "CAFE MOULU EXCELL 250G 12,67 \u20ac 1",
+        "CHOC DEGUS MIX 125G 3,53 \u20ac 1",
+        "Nombre de lignes d'art icles 2",
+        "\u00c0 PAYER 16,45 \u20ac",
+      ].join("\n"),
+    );
+
+    expect(result.declaredItemCount).toBe(2);
+    expect(result.warnings.some((w) => w.startsWith("The items add up to"))).toBe(true);
+  });
+
+  it("stays quiet when the cart reconciles exactly", () => {
+    const result = parseReceiptText(
+      [
+        "ALDI",
+        "16/07/2026",
+        "CAFE MOULU EXCELL 250G 12,87 \u20ac 1",
+        "CHOC DEGUS MIX 125G 3,58 \u20ac 1",
+        "Nombre de lignes d'articles 2",
+        "\u00c0 PAYER 16,45 \u20ac",
+      ].join("\n"),
+    );
+
+    expect(result.warnings.some((w) => w.startsWith("The items add up to"))).toBe(false);
+  });
+
+  it("reads the article count even when OCR splits the word", () => {
+    const result = parseReceiptText("ALDI\nPAIN 1,20\nNombre de lignes d'art icles 9\n\u00c0 PAYER 1,20 \u20ac");
+
+    expect(result.declaredItemCount).toBe(9);
+    expect(result.warnings.some((w) => w.includes("were detected"))).toBe(true);
+  });
+
+  it("does not also complain about the sum when items are known to be missing", () => {
+    const result = parseReceiptText("ALDI\nPAIN 1,20\nNombre de lignes d'articles 9\n\u00c0 PAYER 38,24 \u20ac");
+
+    expect(result.warnings.some((w) => w.includes("were detected"))).toBe(true);
+    expect(result.warnings.some((w) => w.startsWith("The items add up to"))).toBe(false);
+  });
+});
+
 describe("duplicate receipt detection", () => {
   const ledger = [
     transaction({ id: "aldi", amountMinor: 1_482, date: "2026-03-12", merchant: "ALDI" }),

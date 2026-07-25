@@ -1,4 +1,4 @@
-import { createId, todayIsoDate, type ReceiptLineItem } from "@/lib/types";
+import { createId, formatMoney, todayIsoDate, type ReceiptLineItem } from "@/lib/types";
 import type { ReceiptOcrLine } from "@/lib/receipt-ocr";
 
 export interface ReceiptFieldConfidence {
@@ -635,19 +635,36 @@ function extractMerchantAddress(lines: string[], merchant: string): string | nul
  * missed part of a long receipt.
  */
 function extractDeclaredItemCount(lines: string[]): number | null {
-  const patterns = [
-    /nombre\s+de\s+lignes?\s+d.{0,2}articles?\s*:?\s*(\d{1,3})\b/i,
-    /nb\.?\s*(?:d.{0,2})?articles?\s*:?\s*(\d{1,3})\b/i,
+  // OCR drops spaces into the middle of words ("d'art icles"), so the label is
+  // matched against the line with all whitespace removed.
+  const squashedPatterns = [
+    /nombredelignes?d.{0,2}articles?:?(\d{1,3})\b/i,
+    /nb\.?(?:d.{0,2})?articles?:?(\d{1,3})\b/i,
+    /itemcount:?(\d{1,3})\b/i,
+  ];
+  const loosePatterns = [
     /\b(\d{1,3})\s+articles?\b/i,
-    /\bitem\s*count\s*:?\s*(\d{1,3})\b/i,
     /\b(\d{1,3})\s+items?\s+(?:sold|purchased|total)\b/i,
   ];
+
+  const accept = (raw: string): number | null => {
+    const count = Number(raw);
+    return Number.isFinite(count) && count > 0 && count < 300 ? count : null;
+  };
+
   for (const line of lines) {
-    for (const pattern of patterns) {
+    const squashed = line.replace(/\s+/g, "");
+    for (const pattern of squashedPatterns) {
+      const match = pattern.exec(squashed);
+      const count = match ? accept(match[1]) : null;
+      if (count !== null) return count;
+    }
+  }
+  for (const line of lines) {
+    for (const pattern of loosePatterns) {
       const match = pattern.exec(line);
-      if (!match) continue;
-      const count = Number(match[1]);
-      if (Number.isFinite(count) && count > 0 && count < 300) return count;
+      const count = match ? accept(match[1]) : null;
+      if (count !== null) return count;
     }
   }
   return null;
@@ -733,10 +750,26 @@ export function parseReceiptText(
 
   // The receipt's own article count is authoritative about how many products
   // it lists, so a shortfall means the scan or the parse missed some.
-  if (declaredItemCount !== null && lineItems.length !== declaredItemCount) {
+  const itemCountMatches = declaredItemCount === null || declaredItemCount === lineItems.length;
+  if (!itemCountMatches) {
     warnings.push(
       `This receipt lists ${declaredItemCount} items but ${lineItems.length} were detected. Check the scan covers the whole receipt.`,
     );
+  }
+
+  // Reconcile the cart against the receipt total. A single misread digit in a
+  // price is otherwise invisible: 12,87 read as 12,67 and 3,58 as 3,53 left a
+  // complete-looking nine-item cart 25 cents short of the total. Only checked
+  // when the cart is believed complete, so this does not pile onto the warning
+  // above.
+  const cartTotalMinor = lineItems.reduce((total, item) => total + (item.lineTotalMinor ?? 0), 0);
+  if (itemCountMatches && amount.value && lineItems.length > 0) {
+    const difference = Math.abs(cartTotalMinor - amount.value);
+    if (difference > 1) {
+      warnings.push(
+        `The items add up to ${formatMoney(cartTotalMinor)} but the receipt total is ${formatMoney(amount.value)}. Check the item prices; a discount or deposit can also explain the difference.`,
+      );
+    }
   }
   if (fieldConfidence.merchant < 0.7) warnings.push("Check the merchant name.");
   if (category.value === "other" || fieldConfidence.category < 0.65) {
