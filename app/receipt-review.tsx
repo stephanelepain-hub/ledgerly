@@ -2,7 +2,7 @@ import MaterialIcons from "@expo/vector-icons/MaterialIcons";
 import * as Haptics from "expo-haptics";
 import { Image } from "expo-image";
 import { router, useLocalSearchParams } from "expo-router";
-import { useMemo, useRef, useState } from "react";
+import { useMemo, useReducer, useRef, useState } from "react";
 import {
   ActivityIndicator,
   Alert,
@@ -17,23 +17,23 @@ import {
 } from "react-native";
 
 import { ReceiptDatePicker } from "@/components/receipt-date-picker";
+import { ReceiptVerdictCard } from "@/components/receipt-verdict-card";
 import { ScreenContainer } from "@/components/screen-container";
 import { useColors } from "@/hooks/use-colors";
 import { useAccounting } from "@/lib/accounting-context";
 import {
   getReceiptDraft,
   removeReceiptDraft,
-  updateReceiptDraft,
 } from "@/lib/receipt-draft-store";
 import { persistReceiptImage } from "@/lib/receipt-storage";
 import { shareLatestReceiptOcrDiagnostic } from "@/lib/receipt-debug";
+import type { ReceiptReviewModel } from "@/lib/receipt-reliability";
 import {
-  HIGH_CONFIDENCE_THRESHOLD,
-  type ReceiptExtraction,
-} from "@/lib/receipt-parser";
-import { hasConfiguredCloudRetryEndpoint } from "@/constants/oauth";
-import { trpc } from "@/lib/trpc";
-import { createId, formatLongDate, formatMoney, parseAmountToMinor, todayIsoDate, type ReceiptLineItem } from "@/lib/types";
+  buildReceiptSaveFields,
+  createReceiptReviewState,
+  receiptReviewReducer,
+} from "@/lib/receipt-review-state";
+import { createId, formatLongDate, formatMoney, parseAmountToMinor } from "@/lib/types";
 import { findDuplicateTransaction } from "@/lib/db";
 
 export default function ReceiptReviewScreen() {
@@ -43,19 +43,26 @@ export default function ReceiptReviewScreen() {
   // screen flip to "Receipt review expired" the moment the saved draft was
   // removed, before the modal finished dismissing.
   const [draft] = useState(() => (draftId ? getReceiptDraft(draftId) : null));
-  const initial = draft?.extraction;
+  const emptyModel: ReceiptReviewModel = {
+    outcome: "manual_assistance",
+    amountMinor: null,
+    date: null,
+    merchant: null,
+    preTaxMinor: null,
+    taxMinor: null,
+    categoryId: null,
+    description: "",
+    lineItems: [],
+    reasons: ["No verified receipt details are available."],
+  };
+  const initialModel = draft?.reviewModel ?? emptyModel;
+  const [review, dispatch] = useReducer(
+    receiptReviewReducer,
+    initialModel,
+    createReceiptReviewState,
+  );
+  const { amount, date, merchant, description, categoryId, lineItems, priceDrafts } = review;
   const { categories, transactions, upsertTransaction } = useAccounting();
-  const [amount, setAmount] = useState(
-    initial?.amountMinor ? (initial.amountMinor / 100).toFixed(2) : "",
-  );
-  const [date, setDate] = useState(initial?.date ?? todayIsoDate());
-  const [merchant, setMerchant] = useState(initial?.merchant ?? "");
-  const [description, setDescription] = useState(initial?.description ?? "");
-  const [categoryId, setCategoryId] = useState(initial?.categoryId ?? "other");
-  const [extraction, setExtraction] = useState<ReceiptExtraction | null>(initial ?? null);
-  const [source, setSource] = useState<"local_ocr" | "cloud_llm">(
-    draft?.extractionSource ?? "local_ocr",
-  );
   const [isSaving, setIsSaving] = useState(false);
   const [saved, setSaved] = useState(false);
   // Set once the user has consciously chosen to keep a flagged duplicate.
@@ -63,50 +70,22 @@ export default function ReceiptReviewScreen() {
   // React state updates are asynchronous, so the button's `disabled` prop
   // cannot stop a fast double tap. This synchronous guard can.
   const saveGuard = useRef(false);
-  const [lineItems, setLineItems] = useState<ReceiptLineItem[]>(initial?.lineItems ?? []);
-  // Cart prices are edited as raw text and parsed on blur/save. Parsing and
-  // re-formatting on every keystroke corrupted typed amounts (e.g. "450"
-  // became 4005.00 and grew a hundredfold per digit).
-  const [priceDrafts, setPriceDrafts] = useState<Record<string, string>>(() =>
-    Object.fromEntries(
-      (initial?.lineItems ?? []).map((item) => [
-        item.id,
-        item.lineTotalMinor ? (item.lineTotalMinor / 100).toFixed(2) : "",
-      ]),
-    ),
-  );
-  const [preTaxMinor, setPreTaxMinor] = useState(initial?.preTaxMinor ?? null);
-  const [taxMinor, setTaxMinor] = useState(initial?.taxMinor ?? null);
-
-  const cloudRetry = trpc.receipt.extractFromText.useMutation();
+  const scrollRef = useRef<ScrollView>(null);
+  const amountInputRef = useRef<TextInput>(null);
+  const itemInputRefs = useRef<Record<string, TextInput | null>>({});
   const amountMinor = useMemo(() => parseAmountToMinor(amount), [amount]);
   const duplicate = useMemo(
     () => findDuplicateTransaction(transactions, { amountMinor, date }),
     [transactions, amountMinor, date],
   );
-  const displayedPreTaxMinor = preTaxMinor ?? (
-    amountMinor && taxMinor && amountMinor > taxMinor ? amountMinor - taxMinor : null
-  );
-  const needsCloudOffer =
-    hasConfiguredCloudRetryEndpoint() &&
-    !!draft?.ocrText &&
-    (!extraction || extraction.overallConfidence < HIGH_CONFIDENCE_THRESHOLD);
-
-  const applyExtraction = (next: ReceiptExtraction) => {
-    setExtraction(next);
-    if (next.amountMinor) setAmount((next.amountMinor / 100).toFixed(2));
-    setDate(next.date);
-    setMerchant(next.merchant);
-    setDescription(next.description);
-    setCategoryId(next.categoryId);
-    setPreTaxMinor(next.preTaxMinor ?? null);
-    setTaxMinor(next.taxMinor ?? null);
-    setLineItems(next.lineItems);
-    setPriceDrafts(Object.fromEntries(next.lineItems.map((item) => [
-      item.id,
-      item.lineTotalMinor ? (item.lineTotalMinor / 100).toFixed(2) : "",
-    ])));
-  };
+  const vatStillReconciles = amountMinor !== null && amountMinor === initialModel.amountMinor;
+  const displayedPreTaxMinor = vatStillReconciles ? review.preTaxMinor : null;
+  const displayedTaxMinor = vatStillReconciles ? review.taxMinor : null;
+  const verifiedSummary = [
+    initialModel.merchant,
+    initialModel.date ? formatLongDate(initialModel.date) : null,
+    initialModel.amountMinor === null ? null : formatMoney(initialModel.amountMinor),
+  ].filter((value): value is string => !!value).join(" · ") || "Verified fields are retained below";
 
   const shareDiagnostic = async () => {
     try {
@@ -120,75 +99,27 @@ export default function ReceiptReviewScreen() {
   };
 
   const commitPriceDraft = (id: string) => {
-    updateLineItem(id, { lineTotalMinor: parseAmountToMinor(priceDrafts[id] ?? "") });
+    dispatch({ type: "commit_item_price", id });
   };
 
-  const updateLineItem = (id: string, update: Partial<ReceiptLineItem>) => {
-    setLineItems((items) => items.map((item) => item.id === id ? { ...item, ...update } : item));
+  const updateLineItem = (
+    update: Extract<Parameters<typeof receiptReviewReducer>[1], { type: "update_item" }>,
+  ) => {
+    dispatch(update);
   };
 
   const addLineItem = () => {
     const id = createId("item");
-    setLineItems((items) => [...items, {
-      id, name: "", quantity: null, unitPriceMinor: null, lineTotalMinor: null, confidence: 0,
-    }]);
-    setPriceDrafts((drafts) => ({ ...drafts, [id]: "" }));
+    dispatch({ type: "add_item", id });
+    requestAnimationFrame(() => itemInputRefs.current[id]?.focus());
   };
 
-  const retryWithCloud = () => {
-    if (!draft?.ocrText || !draftId) return;
-    Alert.alert(
-      "Send recognized text to cloud?",
-      "Ledgerly will send the OCR text only. The receipt image and your local ledger stay on this device. Cloud processing may use project credits.",
-      [
-        { text: "Cancel", style: "cancel" },
-        {
-          text: "Send text",
-          onPress: async () => {
-            try {
-              const result = await cloudRetry.mutateAsync({
-                ocrText: draft.ocrText,
-                currentDate: todayIsoDate(),
-              });
-              const next: ReceiptExtraction = {
-                amountMinor: result.amountMinor,
-                date: result.date,
-                merchant: result.merchant,
-                description: result.description,
-                categoryId: result.categoryId,
-                fieldConfidence: {
-                  amount: result.amountConfidence,
-                  date: result.dateConfidence,
-                  merchant: result.merchantConfidence,
-                  category: result.categoryConfidence,
-                },
-                overallConfidence: result.overallConfidence,
-                warnings: result.warning ? [result.warning] : [],
-                lineItems,
-              };
-              applyExtraction(next);
-              setSource("cloud_llm");
-              updateReceiptDraft(draftId, {
-                extraction: next,
-                extractionSource: "cloud_llm",
-                status: "ready",
-                error: null,
-              });
-              if (Platform.OS !== "web") {
-                await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-              }
-            } catch (error) {
-              Alert.alert(
-                "Cloud retry unavailable",
-                error instanceof Error
-                  ? error.message
-                  : "You can continue editing the transaction manually.",
-              );
-            }
-          },
-        },
-      ],
-    );
+  const continueFromVerdict = () => {
+    if (!amountMinor) {
+      amountInputRef.current?.focus();
+      return;
+    }
+    scrollRef.current?.scrollToEnd({ animated: true });
   };
 
   const confirmAndSave = async () => {
@@ -245,24 +176,10 @@ export default function ReceiptReviewScreen() {
         .catch(() => draft.imageUri);
       await upsertTransaction({
         type: "expense",
-        amountMinor,
-        date,
-        categoryId,
-        merchant: merchant.trim(),
-        description: description.trim() || `Receipt from ${merchant.trim()}`,
+        ...buildReceiptSaveFields(review),
         notes: "",
         receiptUri,
-        ocrText: draft.ocrText || null,
-        extractionSource: source,
-        lineItems: lineItems
-          .map((item) => ({
-            ...item,
-            name: item.name.trim(),
-            lineTotalMinor: item.id in priceDrafts
-              ? parseAmountToMinor(priceDrafts[item.id])
-              : item.lineTotalMinor,
-          }))
-          .filter((item) => item.name.length > 0),
+        extractionSource: draft.extractionSource,
       });
       removeReceiptDraft(draft.id);
       // Retire the save affordance before navigating. The screen is a
@@ -317,13 +234,22 @@ export default function ReceiptReviewScreen() {
           <View style={styles.headerButton} />
         </View>
 
-        <ScrollView contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled" showsVerticalScrollIndicator={false}>
+        <ScrollView ref={scrollRef} contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled" showsVerticalScrollIndicator={false}>
+          <ReceiptVerdictCard
+            outcome={review.outcome}
+            summary={verifiedSummary}
+            itemCount={initialModel.lineItems.length}
+            reasons={review.reasons}
+            onContinue={continueFromVerdict}
+            onAddBasket={addLineItem}
+          />
+
           <View style={[styles.receiptCard, { backgroundColor: colors.surface, borderColor: colors.border }]}>
             <Image source={{ uri: draft.imageUri }} style={styles.receiptImage} contentFit="cover" />
             <View style={styles.receiptMeta}>
               <View style={[styles.sourceBadge, { backgroundColor: `${colors.primary}18` }]}>
-                <MaterialIcons name={source === "cloud_llm" ? "cloud-done" : "offline-bolt"} size={15} color={colors.primary} />
-                <Text style={[styles.sourceText, { color: colors.primary }]}>{source === "cloud_llm" ? "Cloud text retry" : "On-device OCR"}</Text>
+                <MaterialIcons name="verified-user" size={15} color={colors.primary} />
+                <Text style={[styles.sourceText, { color: colors.primary }]}>On-device OCR · verified only</Text>
               </View>
               {draft.imageUris.length > 1 && (
                 <Text style={[styles.sectionSummary, { color: colors.muted }]}>{draft.imageUris.length} sections</Text>
@@ -343,11 +269,11 @@ export default function ReceiptReviewScreen() {
                 <Text style={[styles.taxSummaryValue, { color: colors.text }]}>{formatMoney(displayedPreTaxMinor)}</Text>
               </View>
             )}
-            {taxMinor !== null && (
+            {displayedTaxMinor !== null && (
               <View style={[styles.taxSummary, { borderTopColor: colors.border }]}>
                 <MaterialIcons name="receipt" size={16} color={colors.muted} />
                 <Text style={[styles.taxSummaryLabel, { color: colors.muted }]}>TVA</Text>
-                <Text style={[styles.taxSummaryValue, { color: colors.text }]}>{formatMoney(taxMinor)}</Text>
+                <Text style={[styles.taxSummaryValue, { color: colors.text }]}>{formatMoney(displayedTaxMinor)}</Text>
               </View>
             )}
             {amountMinor !== null && (
@@ -381,41 +307,26 @@ export default function ReceiptReviewScreen() {
             </View>
           )}
 
-          {needsCloudOffer && (
-            <View style={[styles.cloudCard, { backgroundColor: colors.surface, borderColor: colors.border }]}>
-              <View style={[styles.cloudIcon, { backgroundColor: `${colors.warning}18` }]}>
-                <MaterialIcons name="cloud-sync" size={22} color={colors.warning} />
-              </View>
-              <View style={styles.cloudCopy}>
-                <Text style={[styles.cloudTitle, { color: colors.text }]}>Low-confidence result</Text>
-                <Text style={[styles.cloudBody, { color: colors.muted }]}>Optionally send only the recognized text to a cloud model for another extraction attempt.</Text>
-              </View>
-              <Pressable disabled={cloudRetry.isPending} onPress={retryWithCloud} style={({ pressed }) => [styles.cloudButton, { borderColor: colors.primary }, pressed && styles.pressed]}>
-                {cloudRetry.isPending ? <ActivityIndicator size="small" color={colors.primary} /> : <Text style={[styles.cloudButtonText, { color: colors.primary }]}>Retry</Text>}
-              </Pressable>
-            </View>
-          )}
-
           <View style={[styles.cartCard, { borderColor: colors.border, backgroundColor: colors.surface }]}>
             <View style={styles.cartHeader}>
               <View>
                 <Text style={[styles.cartTitle, { color: colors.text }]}>Shopping cart</Text>
-                <Text style={[styles.cartBody, { color: colors.muted }]}>Items found on this receipt — edit before saving.</Text>
+                <Text style={[styles.cartBody, { color: colors.muted }]}>Verified receipt items or rows you add manually.</Text>
               </View>
               <Text style={[styles.cartCount, { color: colors.primary }]}>{lineItems.length} items</Text>
             </View>
             {lineItems.map((item) => (
               <View key={item.id} style={[styles.cartRow, { borderTopColor: colors.border }]}>
-                <TextInput value={item.name} onChangeText={(name) => updateLineItem(item.id, { name })} placeholder="Item name" placeholderTextColor={colors.muted} style={[styles.cartName, { color: colors.text }]} />
-                <TextInput value={priceDrafts[item.id] ?? (item.lineTotalMinor ? (item.lineTotalMinor / 100).toFixed(2) : "")} onChangeText={(value) => setPriceDrafts((drafts) => ({ ...drafts, [item.id]: value }))} onBlur={() => commitPriceDraft(item.id)} keyboardType="decimal-pad" placeholder="Price" placeholderTextColor={colors.muted} style={[styles.cartPrice, { color: colors.text, borderColor: colors.border }]} />
-                <Pressable onPress={() => setLineItems((items) => items.filter((candidate) => candidate.id !== item.id))} hitSlop={9} accessibilityLabel={`Remove ${item.name || "item"}`}>
+                <TextInput ref={(input) => { itemInputRefs.current[item.id] = input; }} value={item.name} onChangeText={(name) => updateLineItem({ type: "update_item", id: item.id, update: { name } })} placeholder="Item name" placeholderTextColor={colors.muted} style={[styles.cartName, { color: colors.text }]} />
+                <TextInput value={priceDrafts[item.id] ?? (item.lineTotalMinor ? (item.lineTotalMinor / 100).toFixed(2) : "")} onChangeText={(value) => dispatch({ type: "set_item_price", id: item.id, value })} onBlur={() => commitPriceDraft(item.id)} keyboardType="decimal-pad" placeholder="Price" placeholderTextColor={colors.muted} style={[styles.cartPrice, { color: colors.text, borderColor: colors.border }]} />
+                <Pressable onPress={() => dispatch({ type: "remove_item", id: item.id })} hitSlop={9} accessibilityLabel={`Remove ${item.name || "item"}`}>
                   <MaterialIcons name="close" size={19} color={colors.muted} />
                 </Pressable>
               </View>
             ))}
             {lineItems.length === 0 && (
               <View style={styles.emptyCartCopy}>
-                <Text style={[styles.emptyCartMessage, { color: colors.muted }]}>No product lines could be matched with prices. Add an item manually.</Text>
+                <Text style={[styles.emptyCartMessage, { color: colors.muted }]}>The basket is empty. Add items manually if you want to keep them.</Text>
                 <Text style={[styles.diagnosticMessage, { color: colors.primary }]}>A text-only OCR diagnostic was saved on this device. Use &quot;Share OCR diagnostic&quot; below to send it for troubleshooting.</Text>
               </View>
             )}
@@ -433,42 +344,27 @@ export default function ReceiptReviewScreen() {
             </View>
           </View>
 
-          {!!extraction?.warnings.length && (
-            <View style={styles.warningList}>
-              {/* Framing matters: a warning read as a malfunction pushes the
-                  user to rescan, and repeated rescans were the original source
-                  of duplicated cart items. Correcting a field here is normal. */}
-              <Text style={[styles.warningListIntro, { color: colors.text }]}>Ledgerly is unsure about the items below. Correcting them here is normal.</Text>
-              {extraction.warnings.map((warning) => (
-                <View key={warning} style={styles.warningLine}>
-                  <MaterialIcons name="error-outline" size={17} color={colors.warning} />
-                  <Text style={[styles.warningLineText, { color: colors.muted }]}>{warning}</Text>
-                </View>
-              ))}
-            </View>
-          )}
-
           <View style={styles.formSection}>
-            <FieldLabel label={taxMinor !== null ? "Total TTC" : "Amount"} />
+            <FieldLabel label={displayedTaxMinor !== null ? "Total TTC" : "Amount"} />
             <View style={[styles.amountInputWrap, { backgroundColor: colors.surface, borderColor: !amountMinor && amount ? colors.error : colors.border }]}>
               <Text style={[styles.currency, { color: colors.muted }]}>€</Text>
-              <TextInput value={amount} onChangeText={setAmount} keyboardType="decimal-pad" placeholder="0.00" placeholderTextColor={colors.muted} style={[styles.amountInput, { color: colors.text }]} returnKeyType="done" />
+              <TextInput ref={amountInputRef} value={amount} onChangeText={(value) => dispatch({ type: "set_amount", value })} keyboardType="decimal-pad" placeholder="0.00" placeholderTextColor={colors.muted} accessibilityLabel="Receipt total" style={[styles.amountInput, { color: colors.text }]} returnKeyType="done" />
             </View>
 
-            <ReceiptDatePicker value={date} onChange={setDate} confidence={extraction?.fieldConfidence.date} />
+            <ReceiptDatePicker value={date} onChange={(value) => dispatch({ type: "set_date", value })} />
 
             <FieldLabel label="Merchant" />
-            <TextInput value={merchant} onChangeText={setMerchant} placeholder="Merchant or payee" placeholderTextColor={colors.muted} style={[styles.textInput, { color: colors.text, backgroundColor: colors.surface, borderColor: colors.border }]} returnKeyType="next" />
+            <TextInput value={merchant} onChangeText={(value) => dispatch({ type: "set_merchant", value })} placeholder="Merchant or payee" placeholderTextColor={colors.muted} style={[styles.textInput, { color: colors.text, backgroundColor: colors.surface, borderColor: colors.border }]} returnKeyType="next" />
 
             <FieldLabel label="Description" />
-            <TextInput value={description} onChangeText={setDescription} placeholder="What was this for?" placeholderTextColor={colors.muted} style={[styles.textInput, { color: colors.text, backgroundColor: colors.surface, borderColor: colors.border }]} returnKeyType="done" />
+            <TextInput value={description} onChangeText={(value) => dispatch({ type: "set_description", value })} placeholder="What was this for?" placeholderTextColor={colors.muted} style={[styles.textInput, { color: colors.text, backgroundColor: colors.surface, borderColor: colors.border }]} returnKeyType="done" />
 
             <FieldLabel label="Category" />
             <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.categoryRow}>
               {categories.map((category) => {
                 const selected = category.id === categoryId;
                 return (
-                  <Pressable key={category.id} onPress={() => setCategoryId(category.id)} style={({ pressed }) => [styles.categoryChip, { backgroundColor: selected ? `${category.color}20` : colors.surface, borderColor: selected ? category.color : colors.border }, pressed && styles.pressed]}>
+                  <Pressable key={category.id} onPress={() => dispatch({ type: "set_category", value: category.id })} style={({ pressed }) => [styles.categoryChip, { backgroundColor: selected ? `${category.color}20` : colors.surface, borderColor: selected ? category.color : colors.border }, pressed && styles.pressed]}>
                     <MaterialIcons name={category.icon as keyof typeof MaterialIcons.glyphMap} size={17} color={selected ? category.color : colors.muted} />
                     <Text style={[styles.categoryText, { color: selected ? category.color : colors.text }]}>{category.name}</Text>
                   </Pressable>

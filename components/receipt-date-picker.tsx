@@ -16,7 +16,10 @@ type Props = {
 export function ReceiptDatePicker({ label = "Receipt date", value, onChange }: Props) {
   const colors = useColors();
   const [showPicker, setShowPicker] = useState(false);
-  const selectedDate = parseIsoDate(value);
+  const hasDate = /^\d{4}-\d{2}-\d{2}$/.test(value);
+  // A missing OCR date must remain visually and semantically blank. Today is
+  // used only as the native picker's starting page after the user opens it.
+  const selectedDate = hasDate ? parseIsoDate(value) : new Date();
   if (Platform.OS === "web") {
     return (
       <View style={styles.section}>
@@ -55,8 +58,12 @@ export function ReceiptDatePicker({ label = "Receipt date", value, onChange }: P
           <MaterialIcons name="calendar-month" size={24} color={colors.primary} />
         </View>
         <View style={styles.copy}>
-          <Text style={[styles.dateValue, { color: colors.text }]}>{formatLongDate(value)}</Text>
-          <Text style={[styles.isoValue, { color: colors.muted }]}>{value}</Text>
+          <Text style={[styles.dateValue, { color: hasDate ? colors.text : colors.muted }]}>
+            {hasDate ? formatLongDate(value) : "Choose receipt date"}
+          </Text>
+          <Text style={[styles.isoValue, { color: colors.muted }]}>
+            {hasDate ? value : "No date selected"}
+          </Text>
         </View>
         <MaterialIcons name="edit-calendar" size={22} color={colors.primary} />
       </Pressable>
