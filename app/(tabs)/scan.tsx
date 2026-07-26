@@ -240,6 +240,15 @@ export default function ScanScreen() {
     router.push({ pathname: "/receipt-review" as never, params: { draftId: draft.id } });
   };
 
+  /**
+   * Starting over must return to whichever capture path the device actually
+   * uses. It previously always opened the manual camera, which set
+   * `cameraOpen` and therefore *hid the document scanner button* — the
+   * automatic path disappeared with no way back except taking a manual photo
+   * or picking from the gallery, since the Scan tab stays mounted and nothing
+   * else clears the flag. On Android that made "Start over" look like OCR had
+   * stopped working.
+   */
   const startOver = () => {
     if (activeDraftId.current) {
       removeReceiptDraft(activeDraftId.current);
@@ -247,8 +256,22 @@ export default function ScanScreen() {
     }
     setSections([]);
     setPreviewUri(null);
+    if (docScannerAvailable) {
+      setCameraOpen(false);
+      setStatus("Ready to scan a receipt");
+      return;
+    }
     setStatus("Position the top of the receipt inside the frame");
     void openCamera();
+  };
+
+  /** Leaves the manual camera without capturing, restoring the scanner. */
+  const closeManualCamera = () => {
+    setCameraOpen(false);
+    setCameraReady(false);
+    setStatus(sections.length
+      ? "Scanner ready. Add the next section or review the receipt."
+      : "Ready to scan a receipt");
   };
 
   const permissionBlocked = permission && !permission.granted;
@@ -311,9 +334,16 @@ export default function ScanScreen() {
           </Pressable>
         )}
         {cameraOpen ? (
-          <Pressable disabled={working || !cameraReady} onPress={capture} style={({ pressed }) => [styles.primary, { backgroundColor: colors.primary }, (pressed || working || !cameraReady) && styles.pressed]}>
-            <MaterialIcons name="photo-camera" size={22} color="#FFFFFF" /><Text style={styles.primaryText}>Capture section</Text>
-          </Pressable>
+          <>
+            <Pressable disabled={working || !cameraReady} onPress={capture} style={({ pressed }) => [styles.primary, { backgroundColor: colors.primary }, (pressed || working || !cameraReady) && styles.pressed]}>
+              <MaterialIcons name="photo-camera" size={22} color="#FFFFFF" /><Text style={styles.primaryText}>Capture section</Text>
+            </Pressable>
+            {docScannerAvailable && (
+              <Pressable disabled={working} onPress={closeManualCamera} style={({ pressed }) => [styles.secondary, { borderColor: colors.border, backgroundColor: colors.surface }, (pressed || working) && styles.pressed]}>
+                <MaterialIcons name="document-scanner" size={21} color={colors.primary} /><Text style={[styles.secondaryText, { color: colors.text }]}>Use the document scanner instead</Text>
+              </Pressable>
+            )}
+          </>
         ) : permissionBlocked ? (
           docScannerAvailable ? (
             <Pressable onPress={permission.canAskAgain ? () => void openCamera() : openSettings} style={({ pressed }) => [styles.secondary, { borderColor: colors.border, backgroundColor: colors.surface }, pressed && styles.pressed]}>
