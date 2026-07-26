@@ -53,6 +53,13 @@ const CATEGORY_KEYWORDS: Record<string, string[]> = {
     "target",
     "costco",
     "aldi",
+    "intermarch",
+    "carrefour",
+    "lidl",
+    "leclerc",
+    "auchan",
+    "monoprix",
+    "casino",
     "kroger",
     "whole foods",
     "trader joe",
@@ -221,7 +228,7 @@ export function mergeReceiptSections(sections: string[]): string {
 // "montant" alone is the French total, and meal-voucher/payment tender lines
 // carry the receipt total too. Both were being banked as shopping items,
 // which double-counted the total inside the cart.
-const ITEM_NOISE = /\b(sub\s*total|sous\s*total|grand\s*total|total|tax|tva|vat|t\.?(?:t\.?)?c\.?|tic|h\.?[ti1]\.?|hors\s*taxe?|toutes?\s+taxes?\s+comprises?|a\s*payer|net\s+a\s+payer|montant|nombre\s+de\s+lignes?|change|cash|card|c[b8]|visa|mastercard|payment|paiement|titre[s]?\s*restaurant|ticket[s]?\s*restaurant|esp[eè]ces|monnaie|rendu|reste\s+a\s+payer|amount\s*due|balance\s*due|discount|remise|coupon|loyalty|thank\s*you)\b/i;
+const ITEM_NOISE = /\b(sub\s*total|sous\s*total|grand\s*total|total|tax|tva|vat|t\.?(?:t\.?)?c\.?|tic|h\.?[ti1]\.?|hors\s*taxe?|toutes?\s+taxes?\s+comprises?|a\s*payer|net\s+a\s+payer|montant|h[o0]ntant|tant\s+d[uû]|nombre\s+de\s+lignes?|change|cash|card|c[b8]|visa|mastercard|payment|paiement|titre[s]?\s*restaurant|ticket[s]?\s*restaurant|esp[eè]ces|monnaie|rendu|reste\s+a\s+payer|amount\s*due|balance\s*due|discount|remise|coupon|loyalty|thank\s*you)\b/i;
 
 function isItemNoise(value: string): boolean {
   const plain = value.normalize("NFD").replace(/\p{M}/gu, "");
@@ -246,7 +253,9 @@ export function extractReceiptLineItems(lines: string[], visualRowLines?: string
   const sourceLines = visualRowLines?.length ? visualRowLines : lines;
   const cleanedLines = sourceLines.map((rawLine) => rawLine.replace(/\s+/g, " ").trim());
   const amountToken = "(?:[€$£]\\s*)?(\\d{1,3}(?:[ ,]\\d{3})*[.,]\\d{2}|\\d+[.,]\\d{2})";
-  const priceSuffix = "(?:\\s*(?:EUR|EURO|[€$£]|e))?(?:\\s+(?:[A-Z]|\\d+))?";
+  // The VAT class often arrives glued to the currency ("2,18 EURB"), which cost
+  // a real €2.18 product its price and left the cart short of the total.
+  const priceSuffix = "(?:\\s*(?:EURO|EUR|[€$£]|e))?(?:\\s*[A-Z]|\\s+\\d+)?";
   // French tills commonly append a VAT class or article count after a price:
   // "FROMAGE 2,18 EUR B" or "OEUFS 6,99 € 1".
   const inlinePrice = new RegExp(`^(.*?)(?:\\s+)${amountToken}${priceSuffix}\\s*$`, "iu");
@@ -389,11 +398,14 @@ function clamp(value: number): number {
 
 function normalizeAmount(raw: string): number | null {
   let value = raw.replace(/[$€£\s]/g, "");
-  const commaCount = (value.match(/,/g) ?? []).length;
-  const dotCount = (value.match(/\./g) ?? []).length;
-
-  if (commaCount === 1 && dotCount === 0 && /,\d{2}$/.test(value)) {
-    value = value.replace(",", ".");
+  // The decimal separator is whichever of "." or "," comes last and is followed
+  // by exactly two digits; anything earlier is a thousands mark. This reads
+  // "1.234,56" and "1,234.56" alike as 1234.56. Without it the French form lost
+  // its leading thousands group.
+  const decimalIndex = Math.max(value.lastIndexOf(","), value.lastIndexOf("."));
+  if (decimalIndex >= 0 && /^[.,]\d{2}$/.test(value.slice(decimalIndex))) {
+    const whole = value.slice(0, decimalIndex).replace(/[^0-9-]/g, "");
+    value = `${whole || "0"}.${value.slice(decimalIndex + 1)}`;
   } else {
     value = value.replace(/,/g, "");
   }
@@ -403,9 +415,39 @@ function normalizeAmount(raw: string): number | null {
   return Math.round(parsed * 100);
 }
 
+/**
+ * Till software prints version and identifier strings that look exactly like
+ * money and dates: a real Intermarché receipt carried
+ * "Ver:8.6.8.2-981 -1.1.12.1", from which the parser took a €1.12 total and a
+ * 2012-01-01 date, beating the receipt's genuine €19.77 and 17/07/2026.
+ *
+ * Two signals, both structural rather than vocabulary-based: an explicit
+ * version/serial cue on the line, or a numeric run broken by three or more
+ * separators. Ordinary money has at most two ("1.234,56"), so thousands
+ * separators stay safe.
+ */
+const TECHNICAL_CONTEXT = /\b(?:ver|vers|version|build|firmware|logiciel|soft|software|serial|serie|s\/?n)\b\s*[:.]?/i;
+
+function isTechnicalNumber(source: string, start: number, end: number): boolean {
+  const lineStart = source.lastIndexOf("\n", Math.max(0, start - 1)) + 1;
+  const lineBreak = source.indexOf("\n", end);
+  const line = source.slice(lineStart, lineBreak === -1 ? source.length : lineBreak);
+  if (TECHNICAL_CONTEXT.test(line)) return true;
+  let left = start;
+  while (left > lineStart && /[\d.,\-]/.test(source[left - 1])) left -= 1;
+  let right = end;
+  while (right < source.length && /[\d.,\-]/.test(source[right])) right += 1;
+  const separators = (source.slice(left, right).match(/[.,\-](?=\d)/g) ?? []).length;
+  return separators >= 3;
+}
+
 function amountLabelConfidence(line: string): number {
   const normalized = line.toLocaleLowerCase().normalize("NFD").replace(/\p{M}/gu, "");
-  if (/grand\s*total|amount\s*due|total\s*due|balance\s*due|[aà]\s*payer|net\s+[aà]\s+payer|montant\s+d[uû]/.test(normalized)) return 0.98;
+  // OCR mangles the label itself: one real receipt printed MONTANT DU twice and
+  // it was read as "HONTANT DU" and "TANT DU". Losing the label dropped the
+  // labelled-total path (confidence 1.0) to the weak fallback (0.49), which let
+  // a version string win. Tolerate a damaged first syllable.
+  if (/grand\s*total|amount\s*due|total\s*due|balance\s*due|[aà]\s*payer|net\s+[aà]\s+payer|\w{0,3}[o0]ntant\s+d[uû]|\btant\s+d[uû]\b/.test(normalized)) return 0.98;
   if (/total\s*(?:h\.?[ti1]\.?|tva|vat)|montant\s+tva|\btax\b/.test(normalized)) return 0.3;
   if (/\btotal\b/.test(normalized) && !/sub\s*total/.test(normalized)) return 0.9;
   if (/\bpaid\b|card\s*(?:total|payment)|payment/.test(normalized)) return 0.78;
@@ -474,14 +516,26 @@ function extractTax(lines: string[]): number | null {
   );
 }
 
-function extractAmount(lines: string[]): { value: number | null; confidence: number } {
+/**
+ * `preferMinor` lets a caller say what the detected cart adds up to. A till that
+ * splits payment prints several labelled totals: one real receipt showed
+ * "MONTANT DU 19,77" twice and "MONTANT DU 12,08" — the balance left after a
+ * €7.69 meal voucher. Both are legitimately labelled, so position alone picked
+ * the payment split and understated the expense by €7.69. The goods total is the
+ * one the items add up to, which is evidence no wording can contradict.
+ */
+function extractAmount(
+  lines: string[],
+  preferMinor?: number | null,
+): { value: number | null; confidence: number } {
   const candidates: AmountCandidate[] = [];
-  const pattern = /(?:[$€£]\s*)?(\d{1,3}(?:[ ,]\d{3})*(?:[.,]\d{2})|\d+[.,]\d{2})\b/g;
+  const pattern = /(?:[$€£]\s*)?(\d{1,3}(?:[ .,]\d{3})+[.,]\d{2}|\d{1,3}(?:[ ,]\d{3})*(?:[.,]\d{2})|\d+[.,]\d{2})\b/g;
 
   lines.forEach((line, lineIndex) => {
     for (const match of line.matchAll(pattern)) {
       const matchEnd = (match.index ?? 0) + match[0].length;
       if (line.slice(matchEnd).trimStart().startsWith("%")) continue;
+      if (isTechnicalNumber(line, match.index ?? 0, matchEnd)) continue;
       const amountMinor = normalizeAmount(match[0]);
       if (!amountMinor) continue;
       let confidence = amountLabelConfidence(line);
@@ -502,6 +556,15 @@ function extractAmount(lines: string[]): { value: number | null; confidence: num
     if (b.confidence !== a.confidence) return b.confidence - a.confidence;
     return b.lineIndex - a.lineIndex;
   });
+
+  if (preferMinor) {
+    // Highest-confidence candidate that matches the cart. The label floor keeps
+    // this from promoting a coincidental item price into the total.
+    const reconciled = candidates.find(
+      (candidate) => Math.abs(candidate.amountMinor - preferMinor) <= 1 && candidate.confidence >= 0.9,
+    );
+    if (reconciled) return { value: reconciled.amountMinor, confidence: reconciled.confidence };
+  }
 
   const best = candidates[0];
   if (!best || (best.amountMinor > 1_000_000 && best.confidence < 0.72)) {
@@ -530,6 +593,7 @@ function collectDateCandidates(text: string): { value: string; confidence: numbe
   for (const match of text.matchAll(
     /\b(20\d{2})[\-/.](0?[1-9]|1[0-2])[\-/.](0?[1-9]|[12]\d|3[01])\b/g,
   )) {
+    if (isTechnicalNumber(text, match.index ?? 0, (match.index ?? 0) + match[0].length)) continue;
     const value = isoDate(Number(match[1]), Number(match[2]), Number(match[3]));
     if (value) found.push({ value, confidence: 0.94 });
   }
@@ -537,6 +601,7 @@ function collectDateCandidates(text: string): { value: string; confidence: numbe
   for (const match of text.matchAll(
     /\b(0?[1-9]|[12]\d|3[01])[\-/.](0?[1-9]|[12]\d|3[01])[\-/.](20\d{2}|\d{2})\b/g,
   )) {
+    if (isTechnicalNumber(text, match.index ?? 0, (match.index ?? 0) + match[0].length)) continue;
     const first = Number(match[1]);
     const second = Number(match[2]);
     const rawYear = Number(match[3]);
@@ -559,6 +624,7 @@ function collectDateCandidates(text: string): { value: string; confidence: numbe
       "gi",
     ),
   )) {
+    if (isTechnicalNumber(text, match.index ?? 0, (match.index ?? 0) + match[0].length)) continue;
     const monthToken = match[1].slice(0, 3).toLocaleLowerCase();
     const month = ["jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec"].indexOf(monthToken) + 1;
     const rawYear = Number(match[3]);
@@ -670,6 +736,25 @@ function extractMerchant(lines: string[]): { value: string; confidence: number }
     { pattern: /\bintermarch[eé]\b/i, name: "Intermarché" },
     { pattern: /\bauchan\b/i, name: "Auchan" },
   ];
+  // A stylised logo defeats exact matching: "Intermarché" came back as
+  // "internaRChe" (a single m→n substitution). The merchant drives duplicate
+  // detection and categorisation, so it is worth recovering by edit distance
+  // against the short list of known chains. Names are distinctive enough that
+  // one or two edits cannot collide between them.
+  const letterKey = (value: string): string =>
+    value.normalize("NFD").replace(/\p{M}/gu, "").toLocaleLowerCase().replace(/[^a-z]/g, "");
+  const fuzzyKnownMerchant = (line: string): string | null => {
+    const key = letterKey(line);
+    if (key.length < 4) return null;
+    for (const merchant of knownMerchants) {
+      const target = letterKey(merchant.name);
+      const budget = target.length >= 8 ? 2 : 1;
+      if (Math.abs(key.length - target.length) > budget) continue;
+      if (levenshteinDistance(key, target) <= budget) return merchant.name;
+    }
+    return null;
+  };
+
   for (const line of lines.slice(0, 14)) {
     const collapsed = collapseSpacedGlyphs(line);
     const known = knownMerchants.find(
@@ -679,6 +764,9 @@ function extractMerchant(lines: string[]): { value: string; confidence: number }
         merchant.pattern.test(withoutSpaces(line)),
     );
     if (known) return { value: known.name, confidence: 0.96 };
+    const fuzzy = fuzzyKnownMerchant(line) ?? fuzzyKnownMerchant(collapsed);
+    // Slightly lower confidence than an exact hit: the name was repaired.
+    if (fuzzy) return { value: fuzzy, confidence: 0.88 };
   }
 
   const candidates = lines
@@ -724,6 +812,8 @@ function extractDeclaredItemCount(lines: string[]): number | null {
   // matched against the line with all whitespace removed.
   const squashedPatterns = [
     /nombredelignes?d.{0,2}articles?:?(\d{1,3})\b/i,
+    // "Nombre d'articles vendus= 6", read as "Nonbre" on a real receipt.
+    /n[o0][mn]?bre?d.{0,2}articles?(?:vendus|achetes)?[:=]?(\d{1,3})\b/i,
     /nb\.?(?:d.{0,2})?articles?:?(\d{1,3})\b/i,
     /itemcount:?(\d{1,3})\b/i,
   ];
@@ -796,7 +886,7 @@ export function parseReceiptText(
       : [visualRows as ReceiptOcrLine[]];
   const visualLines = mergeSectionLineArrays(visualSections.map(rebuildReceiptVisualRows));
   const analysisLines = [...lines, ...visualLines];
-  const amount = extractAmount(analysisLines);
+  const amountFirstPass = extractAmount(analysisLines);
   const date = extractDate(text);
   const merchantLines = visualLines.length ? visualLines : lines;
   const merchant = extractMerchant(merchantLines);
@@ -805,19 +895,30 @@ export function parseReceiptText(
   const preTaxMinor = extractPreTax(analysisLines);
   const taxMinor = extractTax(analysisLines);
   const detectedLineItems = extractReceiptLineItems(lines, visualLines);
+  const declaredItemCount = extractDeclaredItemCount(analysisLines);
   // A cart line priced at exactly the receipt total is the total itself or a
   // payment tender, never a product: with two or more items, no single product
   // can equal their sum unless the rest are free. This holds whatever the till
   // calls the line, so it catches tender wording OCR has mangled past
   // recognition. Never applied when it would empty the cart, and never to a
   // genuine single-item receipt where the item legitimately is the total.
-  const nonTotalItems = amount.value === null
-    ? detectedLineItems
-    : detectedLineItems.filter((item) => item.lineTotalMinor !== amount.value);
-  const lineItems = detectedLineItems.length > 1 && nonTotalItems.length > 0
-    ? nonTotalItems
-    : detectedLineItems;
-  const declaredItemCount = extractDeclaredItemCount(analysisLines);
+  const withoutTotalPricedLine = (items: ReceiptLineItem[], totalMinor: number | null): ReceiptLineItem[] => {
+    if (totalMinor === null || items.length <= 1) return items;
+    const kept = items.filter((item) => item.lineTotalMinor !== totalMinor);
+    return kept.length > 0 ? kept : items;
+  };
+  // Resolve the total in two passes: the first pass cleans the cart, the cart
+  // then arbitrates between competing labelled totals, and the final amount
+  // cleans the cart again. Only a cart believed complete may arbitrate, so a
+  // scan that missed items cannot drag the total down to match itself.
+  const firstPassItems = withoutTotalPricedLine(detectedLineItems, amountFirstPass.value);
+  const firstPassCartMinor = firstPassItems.reduce((total, item) => total + (item.lineTotalMinor ?? 0), 0);
+  const cartLooksComplete = firstPassItems.length > 1
+    && (declaredItemCount === null || declaredItemCount === firstPassItems.length);
+  const amount = cartLooksComplete && firstPassCartMinor > 0
+    ? extractAmount(analysisLines, firstPassCartMinor)
+    : amountFirstPass;
+  const lineItems = withoutTotalPricedLine(detectedLineItems, amount.value);
   const fieldConfidence: ReceiptFieldConfidence = {
     amount: amount.confidence,
     date: date.confidence,
