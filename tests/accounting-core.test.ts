@@ -924,3 +924,66 @@ describe("a VAT recap table read as columns", () => {
     expect(result.taxMinor).toBe(329);
   });
 });
+
+describe("a VAT recap whose total row was not captured", () => {
+  // diag-11: the same Intermarché receipt, but the recap's TOTAL row fell outside
+  // the capture. Only the per-rate rows survived — and they add up:
+  // 7,29 + 10,07 = 17,36 net, 0,40 + 2,01 = 2,41 tax, 7,69 + 12,08 = 19,77 gross.
+  const perRateRecap = [
+    "INTERMARCHE",
+    "LIME FILET 500 G 2,19 EUR A",
+    "MONTANT DU 19,77 EUR",
+    "RECAPITULATIF TVA",
+    "CODE TVA MT. HT MT TVAMT. TTC",
+    "A 5,50% 7,29 0,40 7,69",
+    "B 20,00% 10,07 2,01 12,08",
+  ].join("\n");
+
+  it("sums the per-rate rows when they account for the whole receipt", () => {
+    const result = parseReceiptText(perRateRecap);
+
+    expect(result.amountMinor).toBe(1_977);
+    expect(result.preTaxMinor).toBe(1_736);
+    expect(result.taxMinor).toBe(241);
+    expect((result.preTaxMinor ?? 0) + (result.taxMinor ?? 0)).toBe(result.amountMinor);
+  });
+
+  it("shows nothing rather than one rate's slice presented as the whole", () => {
+    // The old behaviour took €7.29 off a "MT. HT" label for a €19.77 receipt.
+    const result = parseReceiptText(
+      [
+        "INTERMARCHE",
+        "LIME FILET 500 G 2,19 EUR A",
+        "MONTANT DU 19,77 EUR",
+        "CODE TVA MT. HT MT",
+        "7,29",
+      ].join("\n"),
+    );
+
+    expect(result.amountMinor).toBe(1_977);
+    expect(result.preTaxMinor).toBeNull();
+    expect(result.taxMinor).toBeNull();
+  });
+
+  it("ignores per-rate rows that do not account for the whole receipt", () => {
+    // Only one of two rate blocks was captured, so nothing reconciles.
+    const result = parseReceiptText(
+      [
+        "INTERMARCHE",
+        "LIME FILET 500 G 2,19 EUR A",
+        "MONTANT DU 19,77 EUR",
+        "A 5,50% 7,29 0,40 7,69",
+      ].join("\n"),
+    );
+
+    expect(result.preTaxMinor).toBeNull();
+    expect(result.taxMinor).toBeNull();
+  });
+
+  it("derives the net when only a credible tax is printed", () => {
+    const result = parseReceiptText("MARCHE\nPAIN 1,20\nTOTAL TVA 3,29\nA PAYER 38,24");
+
+    expect(result.taxMinor).toBe(329);
+    expect(result.preTaxMinor).toBe(3_495);
+  });
+});

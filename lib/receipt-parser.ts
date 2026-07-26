@@ -508,30 +508,34 @@ function extractPreTax(lines: string[]): number | null {
   );
 }
 
-interface VatRecapRow {
+interface VatSummary {
   preTaxMinor: number;
   taxMinor: number;
-  totalMinor: number;
 }
 
 /**
  * Reads a VAT recap table by arithmetic instead of by column heading.
  *
- * A real Intermarché receipt printed:
+ * Two real Intermarché scans of one receipt printed the same table differently:
  *
- *     RECAPITULATIF TVA
- *     CODE TVA   MT. HT   MT TVA   MT. TTC
- *     TOTAL TVA  17,36    2,41     19,77
+ *     scan A   TOTAL TVA  17,36  2,41  19,77
+ *     scan B   A  5,50%    7,29  0,40   7,69
+ *              B 20,00%   10,07  2,01  12,08
  *
- * ML Kit's flattened reading order glued the label to the first column
- * ("TOTAL TVA 17,36"), so a label-and-value match reported €17.36 of VAT on a
- * €19.77 receipt. The columns are unambiguous once read as maths: net plus tax
- * equals gross, and tax is the smaller of the two. No heading needs to survive
- * OCR for that to hold.
+ * In scan B the TOTAL row fell outside the capture, and a `MT. HT` label match
+ * reported €7.29 of net on a €19.77 receipt — one rate's slice presented as the
+ * whole. But the per-rate rows add up: 7,29 + 10,07 = 17,36 net, 0,40 + 2,01 =
+ * 2,41 tax, and the gross column reaches the receipt total.
+ *
+ * So: identify columns as net + tax = gross, then accept either a single row
+ * whose gross equals the receipt total, or a set of rows whose gross column sums
+ * to it. Nothing is reported unless it reconciles, because a plausible-looking
+ * wrong net is worse than none.
  */
-function extractVatRecapRow(lines: string[], totalMinor: number | null): VatRecapRow | null {
+function extractVatSummary(lines: string[], totalMinor: number | null): VatSummary | null {
   if (totalMinor === null) return null;
   const amountPattern = /(?:[$€£]\s*)?(\d{1,3}(?:[ ,]\d{3})*(?:[.,]\d{2})|\d+[.,]\d{2})\b/g;
+  const rows: { preTaxMinor: number; taxMinor: number; totalMinor: number }[] = [];
 
   for (const line of lines) {
     const values: number[] = [];
@@ -552,14 +556,69 @@ function extractVatRecapRow(lines: string[], totalMinor: number | null): VatReca
       const rowTotalMinor = values[index + 2];
       if (taxMinor >= preTaxMinor) continue;
       if (Math.abs(preTaxMinor + taxMinor - rowTotalMinor) > 1) continue;
-      // Must be the whole receipt, not one VAT rate's slice. The same table
-      // prints per-rate rows that reconcile internally — "A 5,50% 7,29 0,40
-      // 7,69" — and adopting one of those would understate net and tax.
-      if (Math.abs(rowTotalMinor - totalMinor) > 1) continue;
-      return { preTaxMinor, taxMinor, totalMinor: rowTotalMinor };
+      rows.push({ preTaxMinor, taxMinor, totalMinor: rowTotalMinor });
+      break;
     }
   }
-  return null;
+
+  // A single row covering the whole receipt.
+  const whole = rows.find((row) => Math.abs(row.totalMinor - totalMinor) <= 1);
+  if (whole) return { preTaxMinor: whole.preTaxMinor, taxMinor: whole.taxMinor };
+
+  // Otherwise the per-rate rows, but only if they account for the entire
+  // receipt. Duplicate rows are dropped: the same rate can be printed twice when
+  // overlapping capture sections both catch it.
+  const unique = rows.filter(
+    (row, index) => rows.findIndex(
+      (other) => other.preTaxMinor === row.preTaxMinor
+        && other.taxMinor === row.taxMinor
+        && other.totalMinor === row.totalMinor,
+    ) === index,
+  );
+  if (unique.length < 2) return null;
+  const summed = unique.reduce(
+    (total, row) => ({
+      preTaxMinor: total.preTaxMinor + row.preTaxMinor,
+      taxMinor: total.taxMinor + row.taxMinor,
+      totalMinor: total.totalMinor + row.totalMinor,
+    }),
+    { preTaxMinor: 0, taxMinor: 0, totalMinor: 0 },
+  );
+  if (Math.abs(summed.totalMinor - totalMinor) > 1) return null;
+  return { preTaxMinor: summed.preTaxMinor, taxMinor: summed.taxMinor };
+}
+
+/**
+ * Net and tax are only worth showing when they agree with the total. A label
+ * match can land on one VAT rate's slice, and an unchecked figure in a money
+ * field is worse than an empty one, so anything that does not reconcile is
+ * discarded. Where exactly one of the pair is known and the remainder is a
+ * credible VAT charge, the other is derived rather than guessed.
+ */
+function reconcileVatPair(
+  preTaxMinor: number | null,
+  taxMinor: number | null,
+  totalMinor: number | null,
+): { preTaxMinor: number | null; taxMinor: number | null } {
+  const empty = { preTaxMinor: null, taxMinor: null };
+  if (totalMinor === null) return empty;
+
+  if (preTaxMinor !== null && taxMinor !== null) {
+    return Math.abs(preTaxMinor + taxMinor - totalMinor) <= 1 ? { preTaxMinor, taxMinor } : empty;
+  }
+  // A VAT charge above 30% of the net is not a rate any jurisdiction levies.
+  const credible = (net: number, tax: number): boolean => tax > 0 && tax * 10 <= net * 3;
+  if (taxMinor !== null) {
+    const derivedNet = totalMinor - taxMinor;
+    return derivedNet > 0 && credible(derivedNet, taxMinor)
+      ? { preTaxMinor: derivedNet, taxMinor }
+      : empty;
+  }
+  if (preTaxMinor !== null) {
+    const derivedTax = totalMinor - preTaxMinor;
+    return credible(preTaxMinor, derivedTax) ? { preTaxMinor, taxMinor: derivedTax } : empty;
+  }
+  return empty;
 }
 
 function extractTax(lines: string[]): number | null {
@@ -971,20 +1030,14 @@ export function parseReceiptText(
     ? extractAmount(analysisLines, firstPassCartMinor)
     : amountFirstPass;
   const lineItems = withoutTotalPricedLine(detectedLineItems, amount.value);
-  // A VAT recap row that reconciles with the chosen total outranks any
-  // label-and-value match, because its columns were identified by arithmetic.
-  const vatRecap = extractVatRecapRow(analysisLines, amount.value);
-  const recapAgreesWithTotal = vatRecap !== null;
-  const naiveTaxMinor = extractTax(analysisLines);
-  // Tax above half the total is not a VAT rate any jurisdiction charges; it is a
-  // misread column. Better to show nothing than a fabricated figure.
-  const plausibleTaxMinor = naiveTaxMinor !== null
-    && amount.value !== null
-    && naiveTaxMinor > Math.floor(amount.value / 2)
-    ? null
-    : naiveTaxMinor;
-  const preTaxMinor = recapAgreesWithTotal ? vatRecap.preTaxMinor : extractPreTax(analysisLines);
-  const taxMinor = recapAgreesWithTotal ? vatRecap.taxMinor : plausibleTaxMinor;
+  // A VAT recap read by arithmetic outranks any label-and-value match, because
+  // its columns were identified by the figures rather than by headings OCR may
+  // have destroyed. Failing that, a labelled pair is accepted only if it
+  // reconciles with the total.
+  const vatSummary = extractVatSummary(analysisLines, amount.value)
+    ?? reconcileVatPair(extractPreTax(analysisLines), extractTax(analysisLines), amount.value);
+  const preTaxMinor = vatSummary.preTaxMinor;
+  const taxMinor = vatSummary.taxMinor;
   const fieldConfidence: ReceiptFieldConfidence = {
     amount: amount.confidence,
     date: date.confidence,
