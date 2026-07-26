@@ -224,7 +224,13 @@ export function mergeReceiptSections(sections: string[]): string {
 const ITEM_NOISE = /\b(sub\s*total|sous\s*total|grand\s*total|total|tax|tva|vat|t\.?(?:t\.?)?c\.?|tic|h\.?[ti1]\.?|hors\s*taxe?|toutes?\s+taxes?\s+comprises?|a\s*payer|net\s+a\s+payer|montant|nombre\s+de\s+lignes?|change|cash|card|c[b8]|visa|mastercard|payment|paiement|titre[s]?\s*restaurant|ticket[s]?\s*restaurant|esp[eè]ces|monnaie|rendu|reste\s+a\s+payer|amount\s*due|balance\s*due|discount|remise|coupon|loyalty|thank\s*you)\b/i;
 
 function isItemNoise(value: string): boolean {
-  return ITEM_NOISE.test(value.normalize("NFD").replace(/\p{M}/gu, ""));
+  const plain = value.normalize("NFD").replace(/\p{M}/gu, "");
+  // OCR splits words inside a printed line: a real scan produced "Titre
+  // restaur ant" for a meal-voucher tender, which defeated the phrase patterns
+  // and banked the payment as a €19.81 product. Every phrase above tolerates
+  // zero spaces, so testing a whitespace-free variant catches the mangled
+  // spellings without widening the vocabulary.
+  return ITEM_NOISE.test(plain) || ITEM_NOISE.test(plain.replace(/\s+/gu, ""));
 }
 
 /**
@@ -798,7 +804,19 @@ export function parseReceiptText(
   const category = extractCategory(text, merchant.value);
   const preTaxMinor = extractPreTax(analysisLines);
   const taxMinor = extractTax(analysisLines);
-  const lineItems = extractReceiptLineItems(lines, visualLines);
+  const detectedLineItems = extractReceiptLineItems(lines, visualLines);
+  // A cart line priced at exactly the receipt total is the total itself or a
+  // payment tender, never a product: with two or more items, no single product
+  // can equal their sum unless the rest are free. This holds whatever the till
+  // calls the line, so it catches tender wording OCR has mangled past
+  // recognition. Never applied when it would empty the cart, and never to a
+  // genuine single-item receipt where the item legitimately is the total.
+  const nonTotalItems = amount.value === null
+    ? detectedLineItems
+    : detectedLineItems.filter((item) => item.lineTotalMinor !== amount.value);
+  const lineItems = detectedLineItems.length > 1 && nonTotalItems.length > 0
+    ? nonTotalItems
+    : detectedLineItems;
   const declaredItemCount = extractDeclaredItemCount(analysisLines);
   const fieldConfidence: ReceiptFieldConfidence = {
     amount: amount.confidence,

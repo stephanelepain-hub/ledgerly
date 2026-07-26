@@ -668,3 +668,73 @@ describe("a receipt whose printed dates disagree", () => {
     expect(result.conflictingDates).toEqual(["2026-01-16", "2026-07-16"]);
   });
 });
+
+describe("a payment tender OCR split into broken words", () => {
+  // Real ALDI scan (diag-7, 2026-07-26): the meal-voucher tender printed
+  // "Titre restaurant 19,81" was read as "Titre restaur ant", so the phrase
+  // filter missed it and the payment became a \u20ac19.81 cart item. The cart then
+  // "added up" to \u20ac38.43 against a \u20ac19.81 receipt, which reads to the user like
+  // a warning left over from a previous scan.
+  it("keeps a tender line out of the cart even when OCR splits the word", () => {
+    const result = parseReceiptText(
+      [
+        "ALDI",
+        "BANANE 5 FRUITS 0,99",
+        "JAMBON SANS NITRITE 140G 1,59",
+        "Titre restaur ant 19,81",
+        "MONTANT 19,81",
+      ].join("\n"),
+    );
+
+    expect(result.lineItems.map((item) => item.name)).toEqual([
+      "BANANE 5 FRUITS",
+      "JAMBON SANS NITRITE 140G",
+    ]);
+  });
+
+  it("drops any line priced at exactly the receipt total when other items exist", () => {
+    // Wording-independent guard: no product can equal the sum of the cart
+    // unless every other item is free, so this catches tender lines whose name
+    // OCR has mangled beyond any word list.
+    const result = parseReceiptText(
+      [
+        "MARCHE",
+        "PAIN 1,20",
+        "LAIT 1,05",
+        "TR C0NECS 2,25",
+        "MONTANT 2,25",
+      ].join("\n"),
+    );
+
+    expect(result.lineItems.map((item) => [item.name, item.lineTotalMinor])).toEqual([
+      ["PAIN", 120],
+      ["LAIT", 105],
+    ]);
+    expect(result.warnings.some((w) => w.startsWith("The items add up to"))).toBe(false);
+  });
+
+  it("keeps a single item that legitimately equals the receipt total", () => {
+    const result = parseReceiptText("MARCHE\nOEUFS SOL X30 6,99\nMONTANT 6,99");
+
+    expect(result.lineItems.map((item) => [item.name, item.lineTotalMinor])).toEqual([
+      ["OEUFS SOL X30", 699],
+    ]);
+  });
+
+  it("still reports a genuine shortfall once the tender is excluded", () => {
+    // diag-7 minus the tender: real items summed \u20ac18.62 against a \u20ac19.81 total,
+    // so a smaller, plausible difference must still be surfaced rather than
+    // hidden by the fix above.
+    const result = parseReceiptText(
+      [
+        "ALDI",
+        "BANANE 5 FRUITS 0,99",
+        "JAMBON SANS NITRITE 140G 1,59",
+        "Titre restaur ant 19,81",
+        "MONTANT 19,81",
+      ].join("\n"),
+    );
+
+    expect(result.warnings.some((w) => w.includes("add up to \u20ac2.58") && w.includes("\u20ac19.81"))).toBe(true);
+  });
+});
