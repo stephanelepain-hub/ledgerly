@@ -58,6 +58,22 @@ The native development build derives the optional cloud server address from Expo
 
 The interface was visually checked at a **412 × 915** Pixel-class portrait viewport. Pixel 8 Pro and Android 17 remain compatible with the API 26 minimum because the minimum SDK controls the oldest supported Android release, not the newest supported device.
 
+## License
+
+Released under the [MIT License](LICENSE). Anyone may use, copy, modify and
+distribute this code, including commercially; the only condition is that the
+copyright notice and licence text travel with copies of the source.
+
+Two things the licence does not cover:
+
+- **Third-party dependencies** keep their own licences. The ML Kit text
+  recognition and document scanner components are Google's and are governed by
+  their own terms.
+- **The "Ledgerly" name, icon and store listing** are not a grant of trademark
+  or of publishing rights. The Play application ID `com.app.ledgerlymobile` is
+  tied to this project's Play listing, so a fork that intends to publish must
+  choose its own application ID, name and icon.
+
 ## Receipt reading accuracy
 
 How well a receipt reads depends on the phone's camera and on how the till
