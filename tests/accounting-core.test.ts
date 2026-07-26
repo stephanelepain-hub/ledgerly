@@ -987,3 +987,90 @@ describe("a VAT recap whose total row was not captured", () => {
     expect(result.preTaxMinor).toBe(3_495);
   });
 });
+
+describe("a receipt carrying two different VAT rates", () => {
+  // The hard case. Two rates mean the two *gross* figures also sum to the
+  // receipt total (7,69 + 12,08 = 19,77), so any "amounts that add up to the
+  // total" search reports €7.69 of tax. Only the printed rate distinguishes the
+  // columns: 7,29 at 5,50% can pair with 0,40 and nothing else.
+  it("uses the printed rate to identify net and tax", () => {
+    const result = parseReceiptText(
+      [
+        "INTERMARCHE",
+        "LIME FILET 500 G 2,19 EUR A",
+        "MONTANT DU 19,77 EUR",
+        "RECAPITULATIF TVA",
+        "A 5,50% 7,29 0,40 7,69",
+        "B 20,00% 10,07 2,01 12,08",
+      ].join("\n"),
+    );
+
+    expect(result.preTaxMinor).toBe(1_736);
+    expect(result.taxMinor).toBe(241);
+  });
+
+  it("survives a misread gross column", () => {
+    // diag-12: "7,69" was read as "1,69", so the row no longer reconciles
+    // internally — but 7,29 at 5,50% still identifies 0,40 as its tax.
+    const result = parseReceiptText(
+      [
+        "INTERMARCHE",
+        "LIME FILET 500 G 2,19 EUR A",
+        "MONTANT DU 19,77 EUR",
+        "RECAPITULATIF TVA",
+        "A 5,50% 7,29 0,40 1,69",
+        "B 20,00% 10,07 2,01 12,08",
+      ].join("\n"),
+    );
+
+    expect(result.preTaxMinor).toBe(1_736);
+    expect(result.taxMinor).toBe(241);
+  });
+
+  it("refuses to report a partial recap", () => {
+    // Only one of the two rate blocks was captured, so net and tax would both be
+    // understated. Blank is correct here.
+    const result = parseReceiptText(
+      [
+        "INTERMARCHE",
+        "LIME FILET 500 G 2,19 EUR A",
+        "MONTANT DU 19,77 EUR",
+        "A 5,50% 7,29 0,40 7,69",
+      ].join("\n"),
+    );
+
+    expect(result.preTaxMinor).toBeNull();
+    expect(result.taxMinor).toBeNull();
+  });
+
+  it("never reads a rate's gross figure as the tax", () => {
+    const result = parseReceiptText(
+      [
+        "INTERMARCHE",
+        "LIME FILET 500 G 2,19 EUR A",
+        "MONTANT DU 19,77 EUR",
+        "A 5,50% 7,29 0,40 7,69",
+        "B 20,00% 10,07 2,01 12,08",
+      ].join("\n"),
+    );
+
+    expect(result.taxMinor).not.toBe(769);
+    expect(result.preTaxMinor).not.toBe(1_208);
+  });
+
+  it("still totals the two-rate ALDI recap", () => {
+    const result = parseReceiptText(
+      [
+        "ALDI",
+        "16/07/2026",
+        "NECTARINES 2,74",
+        "1 5,50% 25,55 1,41 26,96",
+        "2 20,00% 9,40 1,88 11,28",
+        "À PAYER 38,24 €",
+      ].join("\n"),
+    );
+
+    expect(result.preTaxMinor).toBe(3_495);
+    expect(result.taxMinor).toBe(329);
+  });
+});

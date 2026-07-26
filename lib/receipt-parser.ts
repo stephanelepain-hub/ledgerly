@@ -532,6 +532,62 @@ interface VatSummary {
  * to it. Nothing is reported unless it reconciles, because a plausible-looking
  * wrong net is worse than none.
  */
+/**
+ * Per-rate VAT rows validated against their own printed percentage.
+ *
+ * A French recap prints one row per rate: "A 5,50% 7,29 0,40 7,69". Checking
+ * tax against net × rate identifies the net and tax columns without trusting
+ * either the column headings or the gross column, both of which OCR has been
+ * observed to destroy. Rows whose arithmetic does not hold are dropped, so a
+ * misread digit costs the whole summary rather than corrupting it.
+ */
+function extractRatedVatRows(lines: string[]): { preTaxMinor: number; taxMinor: number }[] {
+  const amountPattern = /(?:[$€£]\s*)?(\d{1,3}(?:[ ,]\d{3})*(?:[.,]\d{2})|\d+[.,]\d{2})\b/g;
+  const ratePattern = /(\d{1,2})(?:[.,](\d{1,2}))?\s*%/;
+  const found: { preTaxMinor: number; taxMinor: number }[] = [];
+
+  for (const line of lines) {
+    const rateMatch = ratePattern.exec(line);
+    if (!rateMatch) continue;
+    const fraction = (rateMatch[2] ?? "0").padEnd(2, "0");
+    const basisPoints = Number(rateMatch[1]) * 100 + Number(fraction);
+    // A VAT rate, not a discount percentage or a weight.
+    if (basisPoints <= 0 || basisPoints > 3_000) continue;
+
+    const values: number[] = [];
+    for (const match of line.matchAll(amountPattern)) {
+      const start = match.index ?? 0;
+      const end = start + match[0].length;
+      if (line.slice(end).trimStart().startsWith("%")) continue;
+      if (isTechnicalNumber(line, start, end)) continue;
+      const value = normalizeAmount(match[0]);
+      if (value !== null) values.push(value);
+    }
+    if (values.length < 2) continue;
+
+    for (let i = 0; i < values.length; i += 1) {
+      for (let j = 0; j < values.length; j += 1) {
+        if (i === j) continue;
+        const preTaxMinor = values[i];
+        const taxMinor = values[j];
+        if (taxMinor >= preTaxMinor) continue;
+        const expected = Math.round((preTaxMinor * basisPoints) / 10_000);
+        // Per-line rounding means the printed tax can differ from the computed
+        // one by a cent or so; anything further apart is a different column.
+        const tolerance = Math.max(2, Math.ceil(expected * 0.02));
+        if (Math.abs(taxMinor - expected) > tolerance) continue;
+        const duplicate = found.some(
+          (row) => row.preTaxMinor === preTaxMinor && row.taxMinor === taxMinor,
+        );
+        if (!duplicate) found.push({ preTaxMinor, taxMinor });
+        i = values.length;
+        break;
+      }
+    }
+  }
+  return found;
+}
+
 function extractVatSummary(lines: string[], totalMinor: number | null): VatSummary | null {
   if (totalMinor === null) return null;
   const amountPattern = /(?:[$€£]\s*)?(\d{1,3}(?:[ ,]\d{3})*(?:[.,]\d{2})|\d+[.,]\d{2})\b/g;
@@ -564,6 +620,27 @@ function extractVatSummary(lines: string[], totalMinor: number | null): VatSumma
   // A single row covering the whole receipt.
   const whole = rows.find((row) => Math.abs(row.totalMinor - totalMinor) <= 1);
   if (whole) return { preTaxMinor: whole.preTaxMinor, taxMinor: whole.taxMinor };
+
+  // Otherwise use the printed rate to identify the columns. A receipt with two
+  // VAT rates defeats any "find amounts that sum to the total" search, because
+  // the two rates' *gross* figures also sum to the total: on one real scan
+  // 7,69 + 12,08 = 19,77, which would report €7.69 of tax. The rate is the only
+  // independent evidence of which column is which — 7,29 at 5,50% can only pair
+  // with 0,40 — and it survives even when the gross column is misread, as it was
+  // on another scan of the same receipt ("7,69" read as "1,69").
+  const rated = extractRatedVatRows(lines);
+  if (rated.length) {
+    const summed = rated.reduce(
+      (total, row) => ({
+        preTaxMinor: total.preTaxMinor + row.preTaxMinor,
+        taxMinor: total.taxMinor + row.taxMinor,
+      }),
+      { preTaxMinor: 0, taxMinor: 0 },
+    );
+    // Every rate on the receipt must be accounted for, or net and tax would be
+    // understated by whichever block was missed.
+    if (Math.abs(summed.preTaxMinor + summed.taxMinor - totalMinor) <= 1) return summed;
+  }
 
   // Otherwise the per-rate rows, but only if they account for the entire
   // receipt. Duplicate rows are dropped: the same rate can be printed twice when
