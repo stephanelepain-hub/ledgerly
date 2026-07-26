@@ -11,6 +11,7 @@ export type ReceiptEvidenceKind =
   | "literal_date"
   | "conflicting_date"
   | "known_merchant"
+  | "conflicting_merchant"
   | "header_guess"
   | "missing";
 
@@ -268,7 +269,11 @@ function isItemNoise(value: string): boolean {
  * authoritative: items are suggestions for the user to edit, not a second
  * calculation of the transaction amount.
  */
-export function extractReceiptLineItems(lines: string[], visualRowLines?: string[]): ReceiptLineItem[] {
+export function extractReceiptLineItems(
+  lines: string[],
+  visualRowLines?: string[],
+  diagnostics?: { duplicateRisk: boolean },
+): ReceiptLineItem[] {
   const items: ReceiptLineItem[] = [];
   const seen = new Set<string>();
   // ML Kit's result.text may flatten columns (all descriptions followed by all
@@ -327,7 +332,10 @@ export function extractReceiptLineItems(lines: string[], visualRowLines?: string
       return;
     }
     const key = `${normalizedLine(name)}|${lineTotalMinor}`;
-    if (seen.has(key)) return;
+    if (seen.has(key)) {
+      if (diagnostics) diagnostics.duplicateRisk = true;
+      return;
+    }
     // Same price plus a nearly identical name is the signature of the same
     // printed row read twice (overlapping sections or a re-scanned region).
     const ITEM_DUPLICATE_SIMILARITY = 0.8;
@@ -335,6 +343,7 @@ export function extractReceiptLineItems(lines: string[], visualRowLines?: string
       existing.lineTotalMinor === lineTotalMinor &&
       receiptLineSimilarity(existing.name, name) >= ITEM_DUPLICATE_SIMILARITY,
     )) {
+      if (diagnostics) diagnostics.duplicateRisk = true;
       return;
     }
     seen.add(key);
@@ -988,6 +997,10 @@ function extractMerchant(lines: string[]): { value: string; confidence: number; 
     return matches.length === 1 ? matches[0].name : null;
   };
 
+  const knownMatches = new Map<string, number>();
+  const rememberKnown = (name: string, confidence: number) => {
+    knownMatches.set(name, Math.max(confidence, knownMatches.get(name) ?? 0));
+  };
   for (const line of lines.slice(0, 14)) {
     const collapsed = collapseSpacedGlyphs(line);
     const known = knownMerchants.find(
@@ -996,24 +1009,26 @@ function extractMerchant(lines: string[]): { value: string; confidence: number; 
         merchant.pattern.test(collapsed) ||
         merchant.pattern.test(withoutSpaces(line)),
     );
-    if (known) return { value: known.name, confidence: 0.96, evidence: "known_merchant" };
-    const fuzzy = fuzzyKnownMerchant(line) ?? fuzzyKnownMerchant(collapsed);
-    // Slightly lower confidence than an exact hit: the name was repaired.
-    if (fuzzy) return { value: fuzzy, confidence: 0.88, evidence: "known_merchant" };
+    if (known) rememberKnown(known.name, 0.96);
+    else {
+      const fuzzy = fuzzyKnownMerchant(line) ?? fuzzyKnownMerchant(collapsed);
+      if (fuzzy) rememberKnown(fuzzy, 0.88);
+    }
   }
 
-  // The header is not always in the capture. One real scan started mid-receipt,
-  // so the first line was a misread product ("BANANI IkUIS" for BANANE 5
-  // FRUITS) and became the merchant, while "ALDI FRTOU077" sat in the payment
-  // block further down. A chain named anywhere on the receipt is better evidence
-  // than the first line that happens to be legible.
-  const knownAnywhere = lines.find((line) =>
-    knownMerchants.some((merchant) => merchant.pattern.test(line)),
-  );
-  if (knownAnywhere) {
-    const merchant = knownMerchants.find((entry) => entry.pattern.test(knownAnywhere));
-    // Lower confidence than a header match: the name came from body text.
-    if (merchant) return { value: merchant.name, confidence: 0.9, evidence: "known_merchant" };
+  // The header is not always in the capture. Collect exact chain names from the
+  // whole receipt, but never choose the first when distinct known merchants
+  // compete: that ambiguity must stay blank.
+  for (const line of lines) {
+    const known = knownMerchants.find((merchant) => merchant.pattern.test(line));
+    if (known) rememberKnown(known.name, 0.9);
+  }
+  if (knownMatches.size > 1) {
+    return { value: "", confidence: 0, evidence: "conflicting_merchant" };
+  }
+  if (knownMatches.size === 1) {
+    const [name, confidence] = [...knownMatches.entries()][0];
+    return { value: name, confidence, evidence: "known_merchant" };
   }
 
   const candidates = lines
@@ -1143,7 +1158,8 @@ export function parseReceiptText(
   const merchant = extractMerchant(merchantLines);
   const merchantAddress = extractMerchantAddress(merchantLines, merchant.value);
   const category = extractCategory(text, merchant.value);
-  const detectedLineItems = extractReceiptLineItems(lines, visualLines);
+  const cartDiagnostics = { duplicateRisk: false };
+  const detectedLineItems = extractReceiptLineItems(lines, visualLines, cartDiagnostics);
   const declaredItemCount = extractDeclaredItemCount(analysisLines);
   // A cart line priced at exactly the receipt total is the total itself or a
   // payment tender, never a product: with two or more items, no single product
@@ -1263,6 +1279,7 @@ export function parseReceiptText(
     taxMinor,
     lineItems,
     declaredItemCount,
+    cartDuplicateRisk: cartDiagnostics.duplicateRisk,
     conflictingDates: date.conflicting,
   };
 }

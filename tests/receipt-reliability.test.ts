@@ -145,6 +145,33 @@ describe("receipt reliability assessor and verified-only projection", () => {
     expect(review.outcome).toBe("manual_assistance");
   });
 
+  it("does not verify repeated-value evidence without independent spans", () => {
+    const review = createReceiptReviewModel(extraction({
+      evidence: { amount: "repeated_value", date: "literal_date", merchant: "known_merchant" },
+    }), "local_ocr");
+
+    expect(review.amountMinor).toBeNull();
+    expect(review.outcome).toBe("manual_assistance");
+  });
+
+  it("leaves the merchant blank when distinct known merchants compete", () => {
+    const raw = parseReceiptText("ALDI\nLIDL\n25/07/2026\nTOTAL 10,00");
+    const review = createReceiptReviewModel(raw, "local_ocr");
+
+    expect(raw.evidence.merchant).toBe("conflicting_merchant");
+    expect(review.merchant).toBeNull();
+    expect(review.outcome).toBe("manual_assistance");
+  });
+
+  it("derives duplicate risk from local parser rows and quarantines the cart", () => {
+    const raw = parseReceiptText("ALDI\n25/07/2026\nMILK 5,00\nMILK 5,00\nTOTAL 5,00");
+    const review = createReceiptReviewModel(raw, "local_ocr");
+
+    expect(raw.cartDuplicateRisk).toBe(true);
+    expect(review.outcome).toBe("essentials_only");
+    expect(review.lineItems).toEqual([]);
+  });
+
   it("shows VAT only when it reconciles with a verified TTC", () => {
     expect(createReceiptReviewModel(extraction(), "local_ocr")).toMatchObject({
       preTaxMinor: 900,
