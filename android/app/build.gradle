@@ -114,7 +114,7 @@ android {
         // Single source of truth for the Play version code. android/ is
         // committed and Gradle reads this file directly (no prebuild step),
         // so bump this for every Play upload. Play rejects a reused code.
-        versionCode 5
+        versionCode 6
         versionName "1.0.0"
 
         buildConfigField "String", "REACT_NATIVE_RELEASE_LEVEL", "\"${findProperty('reactNativeReleaseLevel') ?: 'stable'}\""
