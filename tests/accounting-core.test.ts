@@ -11,7 +11,6 @@ import {
   getPeriodRange,
   isDateInPeriodRange,
   parseAmountToMinor,
-  todayIsoDate,
   type Transaction,
 } from "../lib/types";
 
@@ -350,9 +349,10 @@ describe("real ALDI scan captured 2026-07-25", () => {
     expect(parseReceiptText(receipt).merchant).toBe("ALDI");
   });
 
-  it("says plainly when the receipt carried no readable date", () => {
+  it("leaves the date blank when the receipt carried no readable date", () => {
     const result = parseReceiptText(receipt);
-    expect(result.date).toBe(todayIsoDate());
+    expect(result.date).toBeNull();
+    expect(result.evidence.date).toBe("missing");
     expect(result.warnings.some((w) => w.startsWith("No date found."))).toBe(true);
   });
 });
@@ -615,25 +615,23 @@ describe("a receipt whose printed dates disagree", () => {
     "le 16/07/26 a 16:01:46",
   ].join("\n");
 
-  it("prefers the reading nearest the scan when the copies tie", () => {
+  it("leaves the date blank when printed copies conflict", () => {
     const result = parseReceiptText(footer);
 
-    expect(result.date).toBe("2026-07-16");
+    expect(result.date).toBeNull();
+    expect(result.evidence.date).toBe("conflicting_date");
   });
 
-  it("lists every disagreeing reading and drops confidence below review", () => {
+  it("keeps disagreeing readings private and reports only a safe reason", () => {
     const result = parseReceiptText(footer);
 
-    expect(result.conflictingDates).toEqual(["2026-07-16", "2026-01-16"]);
-    expect(result.fieldConfidence.date).toBeLessThan(0.72);
-    expect(
-      result.warnings.some(
-        (w) =>
-          w.startsWith("This receipt shows more than one date") &&
-          w.includes("July 16, 2026") &&
-          w.includes("January 16, 2026"),
-      ),
-    ).toBe(true);
+    expect(result.conflictingDates).toEqual(["2026-01-16", "2026-07-16"]);
+    expect(result.fieldConfidence.date).toBe(0);
+    expect(result.warnings).toContain(
+      "The receipt date could not be verified because the recognized dates conflict.",
+    );
+    expect(result.warnings.join(" ")).not.toContain("2026-01-16");
+    expect(result.warnings.join(" ")).not.toContain("2026-07-16");
   });
 
   it("stays confident and quiet when the printed copies agree", () => {
@@ -652,7 +650,7 @@ describe("a receipt whose printed dates disagree", () => {
     expect(result.warnings.some((w) => w.includes("more than one date"))).toBe(false);
   });
 
-  it("follows the majority of the copies rather than the first one read", () => {
+  it("still leaves the field blank when one reading has a majority", () => {
     const result = parseReceiptText(
       [
         "ALDI",
@@ -664,7 +662,7 @@ describe("a receipt whose printed dates disagree", () => {
       ].join("\n"),
     );
 
-    expect(result.date).toBe("2026-01-16");
+    expect(result.date).toBeNull();
     expect(result.conflictingDates).toEqual(["2026-01-16", "2026-07-16"]);
   });
 });
@@ -844,6 +842,7 @@ describe("a till that splits payment across tenders", () => {
         "FREED WHIT,MENT. FORT 2,18 EURB",
         "HARICOT VERT VRAC",
         "0,100 kg X 4,99EURO/kg 0,50 EUR A",
+        "Nombre d'articles vendus= 6",
         "MONTANT DU 19,77 EUR",
         "CARTE TRD CB 7,69 EUR",
         "MONTANT DU 12,08 EUR",

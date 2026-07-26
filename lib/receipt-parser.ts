@@ -1,5 +1,18 @@
-import { createId, formatLongDate, formatMoney, todayIsoDate, type ReceiptLineItem } from "@/lib/types";
+import { createId, formatMoney, type ReceiptLineItem } from "@/lib/types";
 import type { ReceiptOcrLine } from "@/lib/receipt-ocr";
+
+export type ReceiptEvidenceKind =
+  | "strong_label"
+  | "repeated_value"
+  | "cart_reconciliation"
+  | "conflicting_amount"
+  | "weak_label"
+  | "unlabelled_number"
+  | "literal_date"
+  | "conflicting_date"
+  | "known_merchant"
+  | "header_guess"
+  | "missing";
 
 export interface ReceiptFieldConfidence {
   amount: number;
@@ -10,13 +23,19 @@ export interface ReceiptFieldConfidence {
 
 export interface ReceiptExtraction {
   amountMinor: number | null;
-  date: string;
+  date: string | null;
   merchant: string;
   description: string;
   categoryId: string;
   fieldConfidence: ReceiptFieldConfidence;
   overallConfidence: number;
   warnings: string[];
+  /** Semantic provenance used by the trust gate; scalar confidence is diagnostic only. */
+  evidence: {
+    amount: ReceiptEvidenceKind;
+    date: ReceiptEvidenceKind;
+    merchant: ReceiptEvidenceKind;
+  };
   merchantAddress?: string | null;
   /** Total before VAT/TVA, when it can be identified locally. */
   preTaxMinor?: number | null;
@@ -33,11 +52,15 @@ export interface ReceiptExtraction {
    * supported first. Empty when the date was unambiguous.
    */
   conflictingDates?: string[];
+  /** Explicit overlap/duplicate signal for current or future extraction sources. */
+  cartDuplicateRisk?: boolean;
 }
 
 interface AmountCandidate {
   amountMinor: number;
   confidence: number;
+  labelConfidence: number;
+  repeated: boolean;
   lineIndex: number;
 }
 
@@ -725,7 +748,7 @@ function extractTax(lines: string[]): number | null {
 function extractAmount(
   lines: string[],
   preferMinor?: number | null,
-): { value: number | null; confidence: number } {
+): { value: number | null; confidence: number; evidence: ReceiptEvidenceKind } {
   const candidates: AmountCandidate[] = [];
   const pattern = /(?:[$€£]\s*)?(\d{1,3}(?:[ .,]\d{3})+[.,]\d{2}|\d{1,3}(?:[ ,]\d{3})*(?:[.,]\d{2})|\d+[.,]\d{2})\b/g;
 
@@ -736,10 +759,11 @@ function extractAmount(
       if (isTechnicalNumber(line, match.index ?? 0, matchEnd)) continue;
       const amountMinor = normalizeAmount(match[0]);
       if (!amountMinor) continue;
-      let confidence = amountLabelConfidence(line);
+      const labelConfidence = amountLabelConfidence(line);
+      let confidence = labelConfidence;
       if (/[$€£]/.test(match[0])) confidence += 0.05;
       if (lineIndex >= Math.floor(lines.length * 0.45)) confidence += 0.03;
-      candidates.push({ amountMinor, confidence: clamp(confidence), lineIndex });
+      candidates.push({ amountMinor, confidence: clamp(confidence), labelConfidence, repeated: false, lineIndex });
     }
   });
 
@@ -748,7 +772,8 @@ function extractAmount(
     frequencies.set(candidate.amountMinor, (frequencies.get(candidate.amountMinor) ?? 0) + 1);
   }
   for (const candidate of candidates) {
-    if ((frequencies.get(candidate.amountMinor) ?? 0) > 1) candidate.confidence = clamp(candidate.confidence + 0.05);
+    candidate.repeated = (frequencies.get(candidate.amountMinor) ?? 0) > 1;
+    if (candidate.repeated) candidate.confidence = clamp(candidate.confidence + 0.05);
   }
   candidates.sort((a, b) => {
     if (b.confidence !== a.confidence) return b.confidence - a.confidence;
@@ -759,16 +784,34 @@ function extractAmount(
     // Highest-confidence candidate that matches the cart. The label floor keeps
     // this from promoting a coincidental item price into the total.
     const reconciled = candidates.find(
-      (candidate) => Math.abs(candidate.amountMinor - preferMinor) <= 1 && candidate.confidence >= 0.9,
+      (candidate) =>
+        Math.abs(candidate.amountMinor - preferMinor) <= 1 &&
+        candidate.labelConfidence >= 0.9,
     );
-    if (reconciled) return { value: reconciled.amountMinor, confidence: reconciled.confidence };
+    if (reconciled) return { value: reconciled.amountMinor, confidence: reconciled.confidence, evidence: "cart_reconciliation" };
   }
 
   const best = candidates[0];
   if (!best || (best.amountMinor > 1_000_000 && best.confidence < 0.72)) {
-    return { value: null, confidence: 0 };
+    return { value: null, confidence: 0, evidence: "missing" };
   }
-  return { value: best.amountMinor, confidence: best.confidence };
+  // Repeated values are useful diagnostic evidence, but `analysisLines` mixes
+  // flattened OCR text with rebuilt visual rows and may contain the same print
+  // twice. Until independent spans are tracked, repetition alone must not turn
+  // an unlabelled number into verified TTC.
+  const strongValues = new Set(
+    candidates
+      .filter((candidate) => candidate.labelConfidence >= 0.9)
+      .map((candidate) => candidate.amountMinor),
+  );
+  const evidence: ReceiptEvidenceKind = strongValues.size > 1
+    ? "conflicting_amount"
+    : best.labelConfidence >= 0.9
+      ? "strong_label"
+      : best.labelConfidence > 0.46
+        ? "weak_label"
+        : "unlabelled_number";
+  return { value: best.amountMinor, confidence: best.confidence, evidence };
 }
 
 function isoDate(year: number, month: number, day: number): string | null {
@@ -833,13 +876,6 @@ function collectDateCandidates(text: string): { value: string; confidence: numbe
   return found;
 }
 
-function daysBetween(a: string, b: string): number {
-  const left = Date.parse(`${a}T12:00:00Z`);
-  const right = Date.parse(`${b}T12:00:00Z`);
-  if (!Number.isFinite(left) || !Number.isFinite(right)) return Number.POSITIVE_INFINITY;
-  return Math.abs(left - right) / 86_400_000;
-}
-
 /**
  * Resolves the receipt date across every date the text contains.
  *
@@ -849,18 +885,18 @@ function daysBetween(a: string, b: string): number {
  * reporting January with 0.88 confidence and no warning — confidently wrong,
  * which is worse than uncertain.
  *
- * Conflicting copies are therefore surfaced: the best-supported value is
- * pre-filled, confidence drops below the review threshold, and the caller
- * warns with both readings so the user decides.
+ * Conflicting copies are therefore retained for private diagnostics only. No
+ * value is selected for review: a plausible wrong month is worse than a blank.
  */
 function extractDate(text: string): {
-  value: string;
+  value: string | null;
   confidence: number;
   conflicting: string[];
+  evidence: ReceiptEvidenceKind;
 } {
   const candidates = collectDateCandidates(text);
   if (!candidates.length) {
-    return { value: todayIsoDate(), confidence: 0.08, conflicting: [] };
+    return { value: null, confidence: 0, conflicting: [], evidence: "missing" };
   }
 
   const tally = new Map<string, { votes: number; confidence: number }>();
@@ -873,22 +909,20 @@ function extractDate(text: string): {
 
   const distinct = [...tally.entries()];
   if (distinct.length === 1) {
-    return { value: distinct[0][0], confidence: distinct[0][1].confidence, conflicting: [] };
+    return {
+      value: distinct[0][0],
+      confidence: distinct[0][1].confidence,
+      conflicting: [],
+      evidence: "literal_date",
+    };
   }
 
-  // Most corroborated wins. A receipt is normally scanned soon after the
-  // purchase, so break a tie toward the reading nearest the scan date; the
-  // warning still asks the user to confirm, so this is only a starting point.
-  const today = todayIsoDate();
-  distinct.sort((a, b) => {
-    if (b[1].votes !== a[1].votes) return b[1].votes - a[1].votes;
-    return daysBetween(a[0], today) - daysBetween(b[0], today);
-  });
-
+  distinct.sort((a, b) => b[1].votes - a[1].votes || a[0].localeCompare(b[0]));
   return {
-    value: distinct[0][0],
-    confidence: 0.5,
+    value: null,
+    confidence: 0,
     conflicting: distinct.map(([value]) => value),
+    evidence: "conflicting_date",
   };
 }
 
@@ -912,7 +946,7 @@ function titleCaseMerchant(value: string): string {
     .replace(/\b\p{L}/gu, (letter) => letter.toLocaleUpperCase());
 }
 
-function extractMerchant(lines: string[]): { value: string; confidence: number } {
+function extractMerchant(lines: string[]): { value: string; confidence: number; evidence: ReceiptEvidenceKind } {
   // OCR often splits a shop logo into one fragment per glyph, so the row
   // rebuilds as "A L Di". Collapse a run of very short tokens back together
   // before matching, but leave normal wording such as "A PAYER" alone.
@@ -944,13 +978,14 @@ function extractMerchant(lines: string[]): { value: string; confidence: number }
   const fuzzyKnownMerchant = (line: string): string | null => {
     const key = letterKey(line);
     if (key.length < 4) return null;
-    for (const merchant of knownMerchants) {
+    const matches = knownMerchants.filter((merchant) => {
       const target = letterKey(merchant.name);
       const budget = target.length >= 8 ? 2 : 1;
-      if (Math.abs(key.length - target.length) > budget) continue;
-      if (levenshteinDistance(key, target) <= budget) return merchant.name;
-    }
-    return null;
+      return Math.abs(key.length - target.length) <= budget
+        && levenshteinDistance(key, target) <= budget;
+    });
+    // A correction is evidence only when it identifies exactly one known shop.
+    return matches.length === 1 ? matches[0].name : null;
   };
 
   for (const line of lines.slice(0, 14)) {
@@ -961,10 +996,10 @@ function extractMerchant(lines: string[]): { value: string; confidence: number }
         merchant.pattern.test(collapsed) ||
         merchant.pattern.test(withoutSpaces(line)),
     );
-    if (known) return { value: known.name, confidence: 0.96 };
+    if (known) return { value: known.name, confidence: 0.96, evidence: "known_merchant" };
     const fuzzy = fuzzyKnownMerchant(line) ?? fuzzyKnownMerchant(collapsed);
     // Slightly lower confidence than an exact hit: the name was repaired.
-    if (fuzzy) return { value: fuzzy, confidence: 0.88 };
+    if (fuzzy) return { value: fuzzy, confidence: 0.88, evidence: "known_merchant" };
   }
 
   // The header is not always in the capture. One real scan started mid-receipt,
@@ -978,7 +1013,7 @@ function extractMerchant(lines: string[]): { value: string; confidence: number }
   if (knownAnywhere) {
     const merchant = knownMerchants.find((entry) => entry.pattern.test(knownAnywhere));
     // Lower confidence than a header match: the name came from body text.
-    if (merchant) return { value: merchant.name, confidence: 0.9 };
+    if (merchant) return { value: merchant.name, confidence: 0.9, evidence: "known_merchant" };
   }
 
   const candidates = lines
@@ -988,11 +1023,11 @@ function extractMerchant(lines: string[]): { value: string; confidence: number }
     .map((line, index) => ({ line, index }));
 
   const best = candidates[0];
-  if (!best) return { value: "", confidence: 0 };
+  if (!best) return { value: "", confidence: 0, evidence: "missing" };
   best.line = collapseSpacedGlyphs(best.line);
   const hasBusinessCue = /market|store|restaurant|cafe|pharmacy|shop|mart|foods|fuel|gas|aldi|lidl|carrefour|leclerc|intermarch[eé]|auchan/i.test(best.line);
   const confidence = clamp(0.8 - best.index * 0.055 + (hasBusinessCue ? 0.08 : 0));
-  return { value: titleCaseMerchant(best.line), confidence };
+  return { value: titleCaseMerchant(best.line), confidence, evidence: "header_guess" };
 }
 
 function extractMerchantAddress(lines: string[], merchant: string): string | null {
@@ -1127,8 +1162,13 @@ export function parseReceiptText(
   // scan that missed items cannot drag the total down to match itself.
   const firstPassItems = withoutTotalPricedLine(detectedLineItems, amountFirstPass.value);
   const firstPassCartMinor = firstPassItems.reduce((total, item) => total + (item.lineTotalMinor ?? 0), 0);
+  // A cart may arbitrate between competing strong totals only when the receipt
+  // declares its count and every row is present. Without that independent
+  // completeness signal, choosing the total that happens to match the cart is
+  // circular and can promote a payment split.
   const cartLooksComplete = firstPassItems.length > 1
-    && (declaredItemCount === null || declaredItemCount === firstPassItems.length);
+    && declaredItemCount !== null
+    && declaredItemCount === firstPassItems.length;
   const amount = cartLooksComplete && firstPassCartMinor > 0
     ? extractAmount(analysisLines, firstPassCartMinor)
     : amountFirstPass;
@@ -1160,16 +1200,12 @@ export function parseReceiptText(
   // A very low score means no date was printed in the recognised text at all.
   // Tills almost always print one, near the payment details at the foot of the
   // receipt, so the usual cause is a capture that stopped short of the bottom.
-  if (fieldConfidence.date < 0.2) {
+  if (date.evidence === "missing") {
     warnings.push(
       "No date found. The bottom of the receipt, where the date and payment details are printed, may not be in the scan. Add a section covering it, or set the date below.",
     );
-  } else if (date.conflicting.length > 1) {
-    warnings.push(
-      `This receipt shows more than one date (${date.conflicting
-        .map((value) => formatLongDate(value))
-        .join(" and ")}). ${formatLongDate(date.value)} was used — confirm it is right.`,
-    );
+  } else if (date.evidence === "conflicting_date") {
+    warnings.push("The receipt date could not be verified because the recognized dates conflict.");
   } else if (fieldConfidence.date < 0.72) {
     warnings.push("Check the receipt date.");
   }
@@ -1217,6 +1253,11 @@ export function parseReceiptText(
     fieldConfidence,
     overallConfidence,
     warnings,
+    evidence: {
+      amount: amount.evidence,
+      date: date.evidence,
+      merchant: merchant.evidence,
+    },
     merchantAddress,
     preTaxMinor,
     taxMinor,

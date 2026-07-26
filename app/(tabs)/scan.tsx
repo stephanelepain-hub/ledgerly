@@ -12,6 +12,7 @@ import { saveLatestReceiptOcrDiagnostic } from "@/lib/receipt-debug";
 import { launchReceiptDocumentScanner } from "@/lib/receipt-document-scanner";
 import { createReceiptDraft, getReceiptDraft, removeReceiptDraft, updateReceiptDraft } from "@/lib/receipt-draft-store";
 import { mergeReceiptSections, parseReceiptText } from "@/lib/receipt-parser";
+import { createReceiptReviewModel } from "@/lib/receipt-reliability";
 import { recognizeReceiptText, type ReceiptOcrLine } from "@/lib/receipt-ocr";
 
 interface ReceiptSection {
@@ -80,16 +81,22 @@ export default function ScanScreen() {
     try {
       const result = await recognizeReceiptText(uri);
       const readableCharacters = result.text.replace(/\s/g, "").length;
-      if (result.lines.length < 3 || readableCharacters < 20) {
-        throw new Error("Not enough receipt text was recognized. Keep the phone parallel to the receipt, move closer, and avoid glare.");
-      }
+      const sparse = result.lines.length < 3 || readableCharacters < 20;
+      // Sparse OCR is an honest Manual assistance outcome, not a dead end or a
+      // reason to push the user into a rescan loop. Keep the image and whatever
+      // literal evidence exists so the verified-only gate can leave gaps blank.
       setSections((current) => [...current, { uri, text: result.text, lines: result.lines }]);
-      setStatus("Section read. Add the next section with overlap, or review the receipt.");
-    } catch (error) {
-      setStatus("Could not read this section");
+      setStatus(sparse
+        ? "Only a little text was readable. Review it and enter the missing details manually."
+        : "Section read. Add the next section with overlap, or review the receipt.");
+    } catch {
+      // Even a total OCR failure keeps the captured image and reaches the
+      // verified-only review as Manual assistance with every OCR field blank.
+      setSections((current) => [...current, { uri, text: "", lines: [] }]);
+      setStatus("Receipt text was not readable. Review the image and enter the details manually.");
       Alert.alert(
-        "Could not scan this section",
-        error instanceof Error ? error.message : "Try a clearer, closer photo or enter the transaction manually.",
+        "Enter receipt details manually",
+        "Ledgerly could not verify text in this image. The image has been kept; review it and enter the blank fields yourself.",
       );
     } finally {
       setWorking(false);
@@ -221,10 +228,10 @@ export default function ScanScreen() {
     // incorrect reading order. Keep its visual rows, grouped per captured
     // section so the overlap between adjacent photos is merged, not doubled.
     const extraction = parseReceiptText(ocrText, sections.map((section) => section.lines));
+    const reviewModel = createReceiptReviewModel(extraction, "local_ocr");
     updateReceiptDraft(draft.id, {
       status: "ready",
-      ocrText,
-      extraction,
+      reviewModel,
       extractionSource: "local_ocr",
     });
     try {

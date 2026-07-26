@@ -1,5 +1,5 @@
 import { createId } from "@/lib/types";
-import type { ReceiptExtraction } from "@/lib/receipt-parser";
+import type { ReceiptReviewModel } from "@/lib/receipt-reliability";
 
 export type ReceiptDraftStatus = "selected" | "processing" | "ready" | "error";
 
@@ -8,8 +8,8 @@ export interface ReceiptDraft {
   /** The first image remains the preview/legacy attachment; every section stays in memory until confirmation. */
   imageUri: string;
   imageUris: string[];
-  ocrText: string;
-  extraction: ReceiptExtraction | null;
+  /** Verified-only projection. Raw OCR and extraction stay in private diagnostics. */
+  reviewModel: ReceiptReviewModel | null;
   status: ReceiptDraftStatus;
   error: string | null;
   extractionSource: "local_ocr" | "cloud_llm";
@@ -24,8 +24,7 @@ export function createReceiptDraft(imageUris: string[]): ReceiptDraft {
     id: createId("receipt"),
     imageUri: imageUris[0],
     imageUris: [...imageUris],
-    ocrText: "",
-    extraction: null,
+    reviewModel: null,
     status: "selected",
     error: null,
     extractionSource: "local_ocr",
