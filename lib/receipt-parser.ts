@@ -959,6 +959,20 @@ function extractMerchant(lines: string[]): { value: string; confidence: number }
     if (fuzzy) return { value: fuzzy, confidence: 0.88 };
   }
 
+  // The header is not always in the capture. One real scan started mid-receipt,
+  // so the first line was a misread product ("BANANI IkUIS" for BANANE 5
+  // FRUITS) and became the merchant, while "ALDI FRTOU077" sat in the payment
+  // block further down. A chain named anywhere on the receipt is better evidence
+  // than the first line that happens to be legible.
+  const knownAnywhere = lines.find((line) =>
+    knownMerchants.some((merchant) => merchant.pattern.test(line)),
+  );
+  if (knownAnywhere) {
+    const merchant = knownMerchants.find((entry) => entry.pattern.test(knownAnywhere));
+    // Lower confidence than a header match: the name came from body text.
+    if (merchant) return { value: merchant.name, confidence: 0.9 };
+  }
+
   const candidates = lines
     .slice(0, 14)
     .map((line) => line.trim())
@@ -1004,6 +1018,10 @@ function extractDeclaredItemCount(lines: string[]): number | null {
     /nombredelignes?d.{0,2}articles?:?(\d{1,3})\b/i,
     // "Nombre d'articles vendus= 6", read as "Nonbre" on a real receipt.
     /n[o0][mn]?bre?d.{0,2}articles?(?:vendus|achetes)?[:=]?(\d{1,3})\b/i,
+    // The label itself can be destroyed while the count survives: a real scan
+    // produced "it: l: lignes d'articls 8". Anchoring on "lignes...articl" is
+    // enough, and losing this count costs the clearest warning the parser has.
+    /lignes?d.{0,3}articl\w{0,3}[:=]?(\d{1,3})\b/i,
     /nb\.?(?:d.{0,2})?articles?:?(\d{1,3})\b/i,
     /itemcount:?(\d{1,3})\b/i,
   ];

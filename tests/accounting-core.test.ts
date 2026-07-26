@@ -1074,3 +1074,59 @@ describe("a receipt carrying two different VAT rates", () => {
     expect(result.taxMinor).toBe(329);
   });
 });
+
+describe("a poor capture that started mid-receipt", () => {
+  // diag-14: a blurry ALDI scan holding only 2 of 8 items. The parser cannot
+  // invent the missing six, but it must say so clearly and must not mistake a
+  // product for the shop.
+  const receipt = [
+    "BANANI IkUIS",
+    "CAPSULE D6",
+    "INI USTUH: kAMILS 1,49 I",
+    "POMAL BJCUL ORE VRAC 1,32 € I",
+    "it: l: lignes d'articls 8",
+    "A PAYER 19,81 E",
+    "T01AL HI 16,78. €",
+    "TOTAL TVÀ 1,03 €",
+    "Titre restaut ant 19,81 €",
+    "1 5,50% 18,78 1,03 19,81",
+    "le 25/07/26 a 10:52:24",
+    "ALDI FRIOUO77",
+    "32077 LOMUEZ",
+  ].join("\n");
+
+  it("finds the chain named in the payment block rather than a misread product", () => {
+    const result = parseReceiptText(receipt);
+
+    expect(result.merchant).toBe("ALDI");
+  });
+
+  it("reads the article count through a destroyed label", () => {
+    const result = parseReceiptText(receipt);
+
+    expect(result.declaredItemCount).toBe(8);
+  });
+
+  it("says plainly that the scan missed most of the receipt", () => {
+    const result = parseReceiptText(receipt);
+
+    expect(result.warnings).toContain(
+      "This receipt lists 8 items but 2 were detected. Check the scan covers the whole receipt.",
+    );
+  });
+
+  it("still gets the money right from the rate row", () => {
+    // TOTAL HT was misread as 16,78; the 5,50% row supplies 18,78 + 1,03.
+    const result = parseReceiptText(receipt);
+
+    expect(result.amountMinor).toBe(1_981);
+    expect(result.preTaxMinor).toBe(1_878);
+    expect(result.taxMinor).toBe(103);
+  });
+
+  it("keeps the mangled meal-voucher tender out of the cart", () => {
+    const result = parseReceiptText(receipt);
+
+    expect(result.lineItems.every((item) => !/19,81|1981/.test(String(item.lineTotalMinor)))).toBe(true);
+  });
+});
