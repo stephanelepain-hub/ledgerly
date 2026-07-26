@@ -43,7 +43,6 @@ export interface ReceiptReviewModel {
 
 const VERIFIED_AMOUNT_EVIDENCE = new Set<ReceiptEvidenceKind>([
   "strong_label",
-  "repeated_value",
   "cart_reconciliation",
 ]);
 
@@ -73,6 +72,9 @@ function assessDate(extraction: ReceiptExtraction): AssessedField<string> {
 }
 
 function assessMerchant(extraction: ReceiptExtraction): AssessedField<string> {
+  if (extraction.evidence.merchant === "conflicting_merchant") {
+    return { value: null, trust: "conflict", evidence: [extraction.evidence.merchant] };
+  }
   if (!extraction.merchant || extraction.evidence.merchant === "missing") {
     return { value: null, trust: "missing", evidence: [extraction.evidence.merchant] };
   }
@@ -143,7 +145,8 @@ export function assessReceiptReliability(extraction: ReceiptExtraction): Receipt
   if (amount.trust !== "verified") reasons.push("The receipt total could not be verified, so it was left blank.");
   if (date.trust === "conflict") reasons.push("The receipt contained conflicting dates, so the date was left blank.");
   else if (date.trust !== "verified") reasons.push("The receipt date could not be verified, so it was left blank.");
-  if (merchant.trust !== "verified") reasons.push("The merchant could not be verified, so it was left blank.");
+  if (merchant.trust === "conflict") reasons.push("The receipt contained conflicting merchants, so the merchant was left blank.");
+  else if (merchant.trust !== "verified") reasons.push("The merchant could not be verified, so it was left blank.");
   if (outcome !== "manual_assistance" || cart.trust !== "verified") reasons.push(reasonForCart(cart.reason));
 
   return { outcome, amount, date, merchant, cart, reasons };
