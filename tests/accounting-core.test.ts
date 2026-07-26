@@ -1130,3 +1130,57 @@ describe("a poor capture that started mid-receipt", () => {
     expect(result.lineItems.every((item) => !/19,81|1981/.test(String(item.lineTotalMinor)))).toBe(true);
   });
 });
+
+describe("a three-section capture that read one line twice", () => {
+  // diag-15: the closest capture of the day (glyph height 131px) produced the
+  // worst character noise of any scan, and three overlapping sections turned one
+  // product into two cart rows plus a stray "X X" fragment.
+  it("rejects a two-glyph fragment that would borrow a neighbouring price", () => {
+    const result = parseReceiptText(
+      [
+        "ALDI",
+        "CAPSULF DG E 2,69 €",
+        "X X 2,69",
+        "A PAYER 2,69 €",
+      ].join("\n"),
+    );
+
+    expect(result.lineItems.map((item) => item.name)).toEqual(["CAPSULF DG E"]);
+  });
+
+  it("still keeps a short but real product name", () => {
+    const result = parseReceiptText("MARCHE\nTHE VERT 2,50\nA PAYER 2,50");
+
+    expect(result.lineItems.map((item) => item.name)).toEqual(["THE VERT"]);
+  });
+
+  it("says the scan read a line twice when more items are found than declared", () => {
+    const result = parseReceiptText(
+      [
+        "ALDI",
+        "BANANE 5 FRUITS 0,99",
+        "JAMBON SANS NITRITE 140G 1,59",
+        "OEUFS SOL X30 6,99",
+        "Nombre de lignes d'articles 2",
+        "A PAYER 9,57 €",
+      ].join("\n"),
+    );
+
+    expect(result.warnings.some((w) => w.includes("read the same line twice"))).toBe(true);
+    expect(result.warnings.some((w) => w.includes("covers the whole receipt"))).toBe(false);
+  });
+
+  it("still advises checking coverage when items are missing", () => {
+    const result = parseReceiptText(
+      [
+        "ALDI",
+        "BANANE 5 FRUITS 0,99",
+        "Nombre de lignes d'articles 8",
+        "A PAYER 19,81 €",
+      ].join("\n"),
+    );
+
+    expect(result.warnings.some((w) => w.includes("covers the whole receipt"))).toBe(true);
+    expect(result.warnings.some((w) => w.includes("read the same line twice"))).toBe(false);
+  });
+});

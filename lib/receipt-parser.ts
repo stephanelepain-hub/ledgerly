@@ -274,10 +274,17 @@ export function extractReceiptLineItems(lines: string[], visualRowLines?: string
       // "CAFE MOULU EXCELL 250G 12,87 €1".
       .replace(/\s*\d{1,3}(?:[ ,]\d{3})*[.,]\d{2}\s*(?:EUR|EURO|[€$£]|e)?\s*\d*\s*$/i, "")
       .trim();
-    // A product name needs at least two letters and some substance. Stray OCR
-    // fragments such as "|x" (a misread "1x") otherwise became cart entries,
-    // borrowing the price of the line next to them.
+    // A product name needs real substance. Stray OCR fragments such as "|x" (a
+    // misread "1x") otherwise became cart entries, borrowing the price of the
+    // line next to them. Two letters was not enough: a real scan produced the
+    // row "X X" and banked €2.69 against it, duplicating the price of the
+    // product above. A genuine product name has at least three letters and at
+    // least one word of two or more.
     const letterCount = (name.match(/\p{L}/gu) ?? []).length;
+    const longestWordLetters = Math.max(
+      0,
+      ...name.split(/[^\p{L}]+/u).map((word) => word.length),
+    );
     // A weight/unit-price continuation line such as "0,686 kg x 3.99 €/kg"
     // describes the product above it; it is not a product of its own.
     const isMeasurementLine =
@@ -289,7 +296,8 @@ export function extractReceiptLineItems(lines: string[], visualRowLines?: string
       lineTotalMinor > 1_000_000 ||
       isItemNoise(name) ||
       isMeasurementLine ||
-      letterCount < 2 ||
+      letterCount < 3 ||
+      longestWordLetters < 2 ||
       name.length < 3 ||
       name.length > 100
     ) {
@@ -1169,9 +1177,13 @@ export function parseReceiptText(
   // The receipt's own article count is authoritative about how many products
   // it lists, so a shortfall means the scan or the parse missed some.
   const itemCountMatches = declaredItemCount === null || declaredItemCount === lineItems.length;
-  if (!itemCountMatches) {
+  if (!itemCountMatches && declaredItemCount !== null) {
+    // The advice differs by direction, and the old wording told a user who had
+    // captured too much to "check the scan covers the whole receipt".
     warnings.push(
-      `This receipt lists ${declaredItemCount} items but ${lineItems.length} were detected. Check the scan covers the whole receipt.`,
+      lineItems.length > declaredItemCount
+        ? `This receipt lists ${declaredItemCount} items but ${lineItems.length} were detected. Overlapping sections can read the same line twice — remove any duplicates below.`
+        : `This receipt lists ${declaredItemCount} items but ${lineItems.length} were detected. Check the scan covers the whole receipt.`,
     );
   }
 
