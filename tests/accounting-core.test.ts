@@ -738,3 +738,138 @@ describe("a payment tender OCR split into broken words", () => {
     expect(result.warnings.some((w) => w.includes("add up to \u20ac2.58") && w.includes("\u20ac19.81"))).toBe(true);
   });
 });
+
+describe("Intermarché scan where till metadata looked like money", () => {
+  // diag-8, 2026-07-26. Clear print, good light, strong hardware (~113 px
+  // glyphs) and still four wrong fields — every one a parser defect, not an OCR
+  // limit. The receipt's own numbers reconcile exactly: six items totalling
+  // €19.77 against a printed €19.77.
+  const receipt = [
+    "internaRChe",
+    "C.C LA RAMONDERE",
+    "32220 LOMBEZ",
+    "LIME FILET 500 G 2,19 EUR A",
+    "CHOU BLANC PIECE 2,99 EUR A",
+    "APTA POUBELLE PEDALE 9,90 EUR B",
+    "RAISIN NOIR VRAC",
+    "0,315 kg X 6,39EURO/kg 2,01 EUR A",
+    "FREED WHIT,MENT. FORT 2,18 EURB",
+    "HARICOT VERT VRAC",
+    "0,100 kg X 4,99EURO/kg 0,50 EUR A",
+    "TANT DU 19,77 EUR",
+    "HONTANT DU 19,77 EOR",
+    "CARTE TRD CB 7,69 EUR",
+    "HONTANT DU 12,08 EIR",
+    "CB EMY 12,08 EUR",
+    "Nonbre d'articles vendus= 6",
+    "18:03:42 17/07/2026",
+    "Ver:8.6.8.2-981 -1.1.12.1",
+  ].join("\n");
+
+  it("does not mistake a software version for the receipt total", () => {
+    const result = parseReceiptText(receipt);
+
+    // Was €1.12, taken from "-1.1.12.1" in the version string.
+    expect(result.amountMinor).toBe(1_977);
+  });
+
+  it("does not mistake a software version for the receipt date", () => {
+    const result = parseReceiptText(receipt);
+
+    // Was 2012-01-01, parsed from "1.1.12".
+    expect(result.date).toBe("2026-07-17");
+    expect(result.conflictingDates).toEqual([]);
+  });
+
+  it("reads the total through a damaged MONTANT DU label", () => {
+    for (const label of ["MONTANT DU", "HONTANT DU", "TANT DU"]) {
+      const result = parseReceiptText(`MARCHE\nPAIN 1,20 EUR A\n${label} 19,77 EUR`);
+      expect(result.amountMinor).toBe(1_977);
+      expect(result.fieldConfidence.amount).toBeGreaterThan(0.9);
+      expect(result.lineItems.map((item) => item.name)).toEqual(["PAIN"]);
+    }
+  });
+
+  it("keeps an item whose VAT class is glued to the currency", () => {
+    const result = parseReceiptText("MARCHE\nFREED WHIT,MENT. FORT 2,18 EURB\nMONTANT DU 2,18 EUR");
+
+    expect(result.lineItems.map((item) => [item.name, item.lineTotalMinor])).toEqual([
+      ["FREED WHIT,MENT. FORT", 218],
+    ]);
+  });
+
+  it("reads the 'articles vendus' count even misspelled by OCR", () => {
+    const result = parseReceiptText("MARCHE\nPAIN 1,20\nNonbre d'articles vendus= 6\nMONTANT DU 1,20");
+
+    expect(result.declaredItemCount).toBe(6);
+  });
+
+  it("repairs a known merchant name by edit distance", () => {
+    expect(parseReceiptText("internaRChe\nPAIN 1,20\nMONTANT DU 1,20").merchant).toBe("Intermarché");
+    expect(parseReceiptText("CARREF0UR\nPAIN 1,20\nMONTANT DU 1,20").merchant).toBe("Carrefour");
+  });
+
+  it("parses the whole receipt without a single warning", () => {
+    const result = parseReceiptText(receipt);
+
+    expect(result.merchant).toBe("Intermarché");
+    expect(result.amountMinor).toBe(1_977);
+    expect(result.date).toBe("2026-07-17");
+    expect(result.declaredItemCount).toBe(6);
+    expect(result.lineItems).toHaveLength(6);
+    expect(result.lineItems.reduce((t, i) => t + (i.lineTotalMinor ?? 0), 0)).toBe(1_977);
+    expect(result.warnings).toEqual([]);
+  });
+
+  it("still reads a dot-thousands total, which has two separators", () => {
+    // The version-string guard triggers at three separators, so ordinary money
+    // formatting must be unaffected.
+    expect(parseReceiptText("SHOP\nTOTAL 1.234,56").amountMinor).toBe(123_456);
+  });
+});
+
+describe("a till that splits payment across tenders", () => {
+  it("takes the goods total, not the balance left after a meal voucher", () => {
+    // Real Intermarché receipt: €19.77 of goods, €7.69 paid by voucher, €12.08
+    // charged to the card. Every line is labelled MONTANT DU, so the cart has to
+    // arbitrate. Taking the last one understated the expense by €7.69.
+    const result = parseReceiptText(
+      [
+        "INTERMARCHE",
+        "LIME FILET 500 G 2,19 EUR A",
+        "CHOU BLANC PIECE 2,99 EUR A",
+        "APTA POUBELLE PEDALE 9,90 EUR B",
+        "RAISIN NOIR VRAC",
+        "0,315 kg X 6,39EURO/kg 2,01 EUR A",
+        "FREED WHIT,MENT. FORT 2,18 EURB",
+        "HARICOT VERT VRAC",
+        "0,100 kg X 4,99EURO/kg 0,50 EUR A",
+        "MONTANT DU 19,77 EUR",
+        "CARTE TRD CB 7,69 EUR",
+        "MONTANT DU 12,08 EUR",
+      ].join("\n"),
+    );
+
+    expect(result.amountMinor).toBe(1_977);
+    expect(result.lineItems).toHaveLength(6);
+    expect(result.warnings.some((w) => w.startsWith("The items add up to"))).toBe(false);
+  });
+
+  it("does not let an incomplete cart drag the total down to match itself", () => {
+    // The receipt declares nine items and only two were read, so the cart has no
+    // authority: the printed total must stand and the shortfall be reported.
+    const result = parseReceiptText(
+      [
+        "ALDI",
+        "16/07/2026",
+        "NECTARINES BLANCHES VRAC 2,74",
+        "BRETS OIGNONS 200G 1,69",
+        "Nombre de lignes d'articles 9",
+        "À PAYER 38,24 €",
+      ].join("\n"),
+    );
+
+    expect(result.amountMinor).toBe(3_824);
+    expect(result.warnings.some((w) => w.includes("were detected"))).toBe(true);
+  });
+});
