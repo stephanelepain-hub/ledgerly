@@ -508,6 +508,60 @@ function extractPreTax(lines: string[]): number | null {
   );
 }
 
+interface VatRecapRow {
+  preTaxMinor: number;
+  taxMinor: number;
+  totalMinor: number;
+}
+
+/**
+ * Reads a VAT recap table by arithmetic instead of by column heading.
+ *
+ * A real Intermarché receipt printed:
+ *
+ *     RECAPITULATIF TVA
+ *     CODE TVA   MT. HT   MT TVA   MT. TTC
+ *     TOTAL TVA  17,36    2,41     19,77
+ *
+ * ML Kit's flattened reading order glued the label to the first column
+ * ("TOTAL TVA 17,36"), so a label-and-value match reported €17.36 of VAT on a
+ * €19.77 receipt. The columns are unambiguous once read as maths: net plus tax
+ * equals gross, and tax is the smaller of the two. No heading needs to survive
+ * OCR for that to hold.
+ */
+function extractVatRecapRow(lines: string[], totalMinor: number | null): VatRecapRow | null {
+  if (totalMinor === null) return null;
+  const amountPattern = /(?:[$€£]\s*)?(\d{1,3}(?:[ ,]\d{3})*(?:[.,]\d{2})|\d+[.,]\d{2})\b/g;
+
+  for (const line of lines) {
+    const values: number[] = [];
+    for (const match of line.matchAll(amountPattern)) {
+      const start = match.index ?? 0;
+      const end = start + match[0].length;
+      // A VAT *rate* is not an amount.
+      if (line.slice(end).trimStart().startsWith("%")) continue;
+      if (isTechnicalNumber(line, start, end)) continue;
+      const value = normalizeAmount(match[0]);
+      if (value !== null) values.push(value);
+    }
+    if (values.length < 3) continue;
+
+    for (let index = 0; index + 2 < values.length; index += 1) {
+      const preTaxMinor = values[index];
+      const taxMinor = values[index + 1];
+      const rowTotalMinor = values[index + 2];
+      if (taxMinor >= preTaxMinor) continue;
+      if (Math.abs(preTaxMinor + taxMinor - rowTotalMinor) > 1) continue;
+      // Must be the whole receipt, not one VAT rate's slice. The same table
+      // prints per-rate rows that reconcile internally — "A 5,50% 7,29 0,40
+      // 7,69" — and adopting one of those would understate net and tax.
+      if (Math.abs(rowTotalMinor - totalMinor) > 1) continue;
+      return { preTaxMinor, taxMinor, totalMinor: rowTotalMinor };
+    }
+  }
+  return null;
+}
+
 function extractTax(lines: string[]): number | null {
   return extractLabelledTotal(
     lines,
@@ -892,8 +946,6 @@ export function parseReceiptText(
   const merchant = extractMerchant(merchantLines);
   const merchantAddress = extractMerchantAddress(merchantLines, merchant.value);
   const category = extractCategory(text, merchant.value);
-  const preTaxMinor = extractPreTax(analysisLines);
-  const taxMinor = extractTax(analysisLines);
   const detectedLineItems = extractReceiptLineItems(lines, visualLines);
   const declaredItemCount = extractDeclaredItemCount(analysisLines);
   // A cart line priced at exactly the receipt total is the total itself or a
@@ -919,6 +971,20 @@ export function parseReceiptText(
     ? extractAmount(analysisLines, firstPassCartMinor)
     : amountFirstPass;
   const lineItems = withoutTotalPricedLine(detectedLineItems, amount.value);
+  // A VAT recap row that reconciles with the chosen total outranks any
+  // label-and-value match, because its columns were identified by arithmetic.
+  const vatRecap = extractVatRecapRow(analysisLines, amount.value);
+  const recapAgreesWithTotal = vatRecap !== null;
+  const naiveTaxMinor = extractTax(analysisLines);
+  // Tax above half the total is not a VAT rate any jurisdiction charges; it is a
+  // misread column. Better to show nothing than a fabricated figure.
+  const plausibleTaxMinor = naiveTaxMinor !== null
+    && amount.value !== null
+    && naiveTaxMinor > Math.floor(amount.value / 2)
+    ? null
+    : naiveTaxMinor;
+  const preTaxMinor = recapAgreesWithTotal ? vatRecap.preTaxMinor : extractPreTax(analysisLines);
+  const taxMinor = recapAgreesWithTotal ? vatRecap.taxMinor : plausibleTaxMinor;
   const fieldConfidence: ReceiptFieldConfidence = {
     amount: amount.confidence,
     date: date.confidence,

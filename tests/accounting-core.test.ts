@@ -873,3 +873,54 @@ describe("a till that splits payment across tenders", () => {
     expect(result.warnings.some((w) => w.includes("were detected"))).toBe(true);
   });
 });
+
+describe("a VAT recap table read as columns", () => {
+  it("takes tax from the recap row that reconciles with the total", () => {
+    // Real Intermarché rows (diag-10): HT 17,36 + TVA 2,41 = TTC 19,77.
+    const result = parseReceiptText(
+      [
+        "INTERMARCHE",
+        "LIME FILET 500 G 2,19 EUR A",
+        "MONTANT DU 19,77 EUR",
+        "RECAPITULATIF TVA",
+        "CODE TVA MT. HT MT TVA MT. TTC",
+        "TOTAL TVA 17,36 2,41 19,77",
+      ].join("\n"),
+    );
+
+    expect(result.amountMinor).toBe(1_977);
+    expect(result.preTaxMinor).toBe(1_736);
+    expect(result.taxMinor).toBe(241);
+  });
+
+  it("refuses an implausible tax rather than showing a fabricated one", () => {
+    // The flattened reading order glues the label to the HT column, leaving
+    // "TOTAL TVA 17,36" — €17.36 of VAT on a €19.77 receipt.
+    const result = parseReceiptText("INTERMARCHE\nPAIN 1,20\nMONTANT DU 19,77 EUR\nTOTAL TVA 17,36");
+
+    expect(result.amountMinor).toBe(1_977);
+    expect(result.taxMinor).toBeNull();
+  });
+
+  it("ignores a per-rate recap block that does not match the receipt total", () => {
+    // Multi-rate ALDI receipt: the 5,5% block reconciles internally (25,55 +
+    // 1,41 = 26,96) but is only part of a €38.24 receipt, so the receipt's own
+    // TOTAL HT and TOTAL TVA lines must still win.
+    const result = parseReceiptText(
+      [
+        "ALDI",
+        "16/07/2026",
+        "NECTARINES 2,74",
+        "1 5,50% 25,55 1,41 26,96",
+        "2 20,00% 9,40 1,88 11,28",
+        "TOTAL HT 34,95 €",
+        "TOTAL TVA 3,29 €",
+        "À PAYER 38,24 €",
+      ].join("\n"),
+    );
+
+    expect(result.amountMinor).toBe(3_824);
+    expect(result.preTaxMinor).toBe(3_495);
+    expect(result.taxMinor).toBe(329);
+  });
+});
