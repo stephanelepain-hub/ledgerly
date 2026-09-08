@@ -281,6 +281,24 @@ describe("receipt parser", () => {
   });
 });
 
+describe("a French receipt whose running subtotal is printed before the tender", () => {
+  it("does not verify a SOUS-TOTAL as the receipt total", () => {
+    const result = parseReceiptText(`ALDI\n25/07/2026\nLAIT 5,00\nPAIN 10,00\nSOUS-TOTAL 15,00\nCB 17,00`);
+
+    // Only an English "sub total" used to be excluded from the strong "total"
+    // label, so 15,00 passed the trust gate as the verified total.
+    expect(result.evidence.amount).toBe("weak_label");
+    expect(result.warnings).toContain("Check the total amount.");
+  });
+
+  it("still verifies a real labelled total printed after a SOUS-TOTAL", () => {
+    const result = parseReceiptText(`ALDI\n25/07/2026\nLAIT 5,00\nPAIN 10,00\nSOUS-TOTAL 15,00\nMONTANT DU 15,00\nCB 15,00`);
+
+    expect(result.evidence.amount).toBe("strong_label");
+    expect(result.amountMinor).toBe(1_500);
+  });
+});
+
 describe("cart noise from a real ALDI scan", () => {
   it("keeps the receipt total and meal-voucher tender out of the cart", () => {
     const result = parseReceiptText(

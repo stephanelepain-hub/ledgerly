@@ -252,7 +252,7 @@ export function mergeReceiptSections(sections: string[]): string {
 // "montant" alone is the French total, and meal-voucher/payment tender lines
 // carry the receipt total too. Both were being banked as shopping items,
 // which double-counted the total inside the cart.
-const ITEM_NOISE = /\b(sub\s*total|sous\s*total|grand\s*total|total|tax|tva|vat|t\.?(?:t\.?)?c\.?|tic|h\.?[ti1]\.?|hors\s*taxe?|toutes?\s+taxes?\s+comprises?|a\s*payer|net\s+a\s+payer|montant|h[o0]ntant|tant\s+d[uû]|nombre\s+de\s+lignes?|change|cash|card|c[b8]|visa|mastercard|payment|paiement|titre[s]?\s*restaurant|ticket[s]?\s*restaurant|esp[eè]ces|monnaie|rendu|reste\s+a\s+payer|amount\s*due|balance\s*due|discount|remise|coupon|loyalty|thank\s*you)\b/i;
+const ITEM_NOISE = /\b(sub[\s-]*total|sous[\s-]*total|grand\s*total|total|tax|tva|vat|t\.?(?:t\.?)?c\.?|tic|h\.?[ti1]\.?|hors\s*taxe?|toutes?\s+taxes?\s+comprises?|a\s*payer|net\s+a\s+payer|montant|h[o0]ntant|tant\s+d[uû]|nombre\s+de\s+lignes?|change|cash|card|c[b8]|visa|mastercard|payment|paiement|titre[s]?\s*restaurant|ticket[s]?\s*restaurant|esp[eè]ces|monnaie|rendu|reste\s+a\s+payer|amount\s*due|balance\s*due|discount|remise|coupon|loyalty|thank\s*you)\b/i;
 
 function isItemNoise(value: string): boolean {
   const plain = value.normalize("NFD").replace(/\p{M}/gu, "");
@@ -489,9 +489,11 @@ function amountLabelConfidence(line: string): number {
   // a version string win. Tolerate a damaged first syllable.
   if (/grand\s*total|amount\s*due|total\s*due|balance\s*due|[aà]\s*payer|net\s+[aà]\s+payer|\w{0,3}[o0]ntant\s+d[uû]|\btant\s+d[uû]\b/.test(normalized)) return 0.98;
   if (/total\s*(?:h\.?[ti1]\.?|tva|vat)|montant\s+tva|\btax\b/.test(normalized)) return 0.3;
-  if (/\btotal\b/.test(normalized) && !/sub\s*total/.test(normalized)) return 0.9;
+  // A French SOUS-TOTAL is a subtotal too; treating it as a strong label let a
+  // running subtotal pass the trust gate as the verified receipt total.
+  if (/\btotal\b/.test(normalized) && !/s(?:ub|ous)[\s-]*total/.test(normalized)) return 0.9;
   if (/\bpaid\b|card\s*(?:total|payment)|payment/.test(normalized)) return 0.78;
-  if (/sub\s*total/.test(normalized)) return 0.58;
+  if (/s(?:ub|ous)[\s-]*total/.test(normalized)) return 0.58;
   if (/tax|tip|change|cash/.test(normalized)) return 0.32;
   return 0.46;
 }
