@@ -478,8 +478,8 @@ const styles = StyleSheet.create({
   pressed: { opacity: 0.62 },
   disabled: { opacity: 0.55 },
   emptyIcon: { width: 72, height: 72, borderRadius: 24, alignItems: "center", justifyContent: "center", marginBottom: 16 },
-  emptyTitle: { fontSize: 21, lineHeight: 28, fontWeight: "800", textAlign: "center" },
-  emptyBody: { marginTop: 6, fontSize: 14, lineHeight: 20, textAlign: "center" },
+  emptyTitle: { fontSize: 21, lineHeight: 28, fontWeight: "800", textAlign: "center", alignSelf: "stretch" },
+  emptyBody: { marginTop: 6, fontSize: 14, lineHeight: 20, textAlign: "center", alignSelf: "stretch" },
   returnButton: { marginTop: 18, minHeight: 48, borderRadius: 15, paddingHorizontal: 20, alignItems: "center", justifyContent: "center" },
   returnText: { color: "#FFFFFF", fontSize: 14, lineHeight: 19, fontWeight: "800" },
 });

@@ -302,6 +302,6 @@ const styles = StyleSheet.create({
   rowContainer: { paddingHorizontal: 14 },
   empty: { marginTop: 2, minHeight: 250, borderRadius: 18, borderWidth: 1, padding: 28, alignItems: "center", justifyContent: "center" },
   emptyIcon: { width: 54, height: 54, borderRadius: 18, alignItems: "center", justifyContent: "center", marginBottom: 12 },
-  emptyTitle: { fontSize: 17, lineHeight: 23, fontWeight: "800", textAlign: "center" },
-  emptyBody: { marginTop: 6, fontSize: 14, lineHeight: 20, textAlign: "center", maxWidth: 280 },
+  emptyTitle: { fontSize: 17, lineHeight: 23, fontWeight: "800", textAlign: "center", alignSelf: "stretch" },
+  emptyBody: { marginTop: 6, fontSize: 14, lineHeight: 20, textAlign: "center", alignSelf: "stretch", maxWidth: 280 },
 });
