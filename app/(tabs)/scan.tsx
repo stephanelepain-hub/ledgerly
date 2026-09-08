@@ -2,6 +2,7 @@ import MaterialIcons from "@expo/vector-icons/MaterialIcons";
 import { CameraView, useCameraPermissions } from "expo-camera";
 import { Image } from "expo-image";
 import * as ImagePicker from "expo-image-picker";
+import { useIsFocused } from "@react-navigation/native";
 import { router, useFocusEffect } from "expo-router";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { ActivityIndicator, Alert, Linking, Platform, Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
@@ -27,6 +28,9 @@ export default function ScanScreen() {
   const openedOnce = useRef(false);
   const activeDraftId = useRef<string | null>(null);
   const [permission, requestPermission] = useCameraPermissions();
+  // The tab navigator keeps this screen mounted, so without this the camera
+  // session (and its battery drain) survived switching to another tab.
+  const isFocused = useIsFocused();
   const [cameraOpen, setCameraOpen] = useState(false);
   const [cameraReady, setCameraReady] = useState(false);
   const [working, setWorking] = useState(false);
@@ -306,6 +310,7 @@ export default function ScanScreen() {
               style={styles.camera}
               facing="back"
               autofocus="on"
+              active={isFocused}
               onCameraReady={() => {
                 setCameraReady(true);
                 setStatus(sections.length
