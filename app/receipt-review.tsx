@@ -145,9 +145,10 @@ export default function ReceiptReviewScreen() {
       return;
     }
 
-    saveGuard.current = true;
     // Warn before a re-scanned receipt is counted twice. This only warns:
     // the user can still keep it, because two genuine purchases can coincide.
+    // The re-entrancy guard is armed only after this prompt: "Save anyway"
+    // re-enters this function, and an armed guard made it return silently.
     if (duplicate && !duplicateAcknowledged.current) {
       Alert.alert(
         "You have already saved this one",
@@ -167,6 +168,7 @@ export default function ReceiptReviewScreen() {
       return;
     }
 
+    saveGuard.current = true;
     setIsSaving(true);
     try {
       // Copy the receipt image out of the volatile camera/picker cache before
