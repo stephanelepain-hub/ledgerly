@@ -4,7 +4,7 @@ Ledgerly is a local-first accounting prototype built with **React Native, Expo S
 
 The core workflow is intentionally confirmation-first:
 
-> Camera or gallery → on-device ML Kit OCR → deterministic local parsing → confidence review → optional text-only cloud retry → user confirms → SQLite save.
+> Camera or gallery → on-device ML Kit OCR → deterministic local parsing → confidence review → user confirms → SQLite save.
 
 ## Implemented features
 
@@ -13,7 +13,6 @@ The core workflow is intentionally confirmation-first:
 | Receipt intake | Camera capture and gallery import with image preview and permission handling |
 | On-device OCR | Google ML Kit text recognition through `@infinitered/react-native-mlkit-text-recognition` |
 | Local parsing | Merchant, total, date, and category inference with field-level and overall confidence |
-| Cloud fallback | Optional structured LLM extraction for low-confidence scans; only recognized text is sent after explicit consent |
 | Transaction management | Manual entry, receipt-prefilled review, confirmation before save, editing, and protected deletion |
 | Categories | Predefined accounting categories plus custom local categories |
 | Dashboard | Monthly, yearly, and all-time income, expenses, balance, recent activity, and category spending |
@@ -30,7 +29,6 @@ The core workflow is intentionally confirmation-first:
 | Native database | `lib/db.ts` | Versioned schema, category seeding, parameterized CRUD, and summary calculations |
 | Receipt intelligence | `lib/receipt-ocr.ts`, `lib/receipt-parser.ts` | On-device recognition, deterministic extraction, category inference, and confidence scoring |
 | Draft privacy | `lib/receipt-draft-store.ts` | Keeps unconfirmed scan results in memory rather than in the ledger |
-| Cloud retry | `server/routers.ts` | Strictly validated structured extraction from recognized receipt text |
 | Browser adapter | `lib/accounting-context.web.tsx` | Functional local preview without changing the Android SQLite path |
 
 ## Android development build
@@ -50,7 +48,7 @@ With an Android device or emulator connected, create and install the custom buil
 pnpm exec expo run:android --no-bundler
 ```
 
-The native development build derives the optional cloud server address from Expo's Metro host. A standalone deployment can provide `EXPO_PUBLIC_API_BASE_URL` through the project environment. The app remains usable without that endpoint; the user can edit locally parsed fields or enter a transaction manually.
+The app has no server dependency: every scan is parsed on the device, and the user can edit locally parsed fields or enter a transaction manually. The `server/` directory is a leftover of the original scaffold and is not used by the app.
 
 ## Android configuration
 
@@ -103,7 +101,7 @@ be accurate about uncertainty:
 
 ## Privacy behavior
 
-Receipt images and accounting records stay local by default. ML Kit recognition and deterministic parsing run on the device. When a scan has low confidence, Ledgerly presents a separate cloud retry action and explains that only the recognized receipt text—not the image—is sent. No extracted transaction enters SQLite until the user selects **Confirm & save**.
+Receipt images and accounting records stay local by default. ML Kit recognition and deterministic parsing run on the device. When a scan has low confidence, Ledgerly flags the uncertain fields for review; nothing is sent off the device. No extracted transaction enters SQLite until the user selects **Confirm & save**.
 
 ## Validation
 
