@@ -305,6 +305,6 @@ const styles = StyleSheet.create({
   fill: { height: 6, borderRadius: 3 },
   empty: { minHeight: 150, alignItems: "center", justifyContent: "center", paddingHorizontal: 28, paddingVertical: 22 },
   emptyIcon: { width: 48, height: 48, borderRadius: 16, alignItems: "center", justifyContent: "center", marginBottom: 10 },
-  emptyTitle: { fontSize: 16, lineHeight: 22, fontWeight: "800", textAlign: "center" },
-  emptyBody: { marginTop: 4, fontSize: 13, lineHeight: 18, textAlign: "center" },
+  emptyTitle: { fontSize: 16, lineHeight: 22, fontWeight: "800", textAlign: "center", alignSelf: "stretch" },
+  emptyBody: { marginTop: 4, fontSize: 13, lineHeight: 18, textAlign: "center", alignSelf: "stretch" },
 });
